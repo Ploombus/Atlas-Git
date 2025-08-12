@@ -1,0 +1,14 @@
+<ui:UXML xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" noNamespaceSchemaLocation="../../UIElementsSchema/UIElements.xsd" editor-extension-mode="False">
+    <Style src="project://database/Assets/Lukas/LukasUIPanel/LukasUIStyle.uss?fileID=7433441132597879392&amp;guid=3f654f562cef53344b554b4177b45b02&amp;type=3#LukasUIStyle" />
+    <ui:VisualElement name="UIPanel" class="panel">
+        <ui:Button name="LockFormation" class="panelbutton" style="background-image: resource(&apos;Png/Unlock&apos;);" />
+        <ui:Button name="Formations" class="panelbutton" style="background-image: resource(&apos;Png/TightFormation&apos;);" />
+        <ui:VisualElement name="Divider" class="divider" style="flex-grow: 1;" />
+        <ui:Button name="SpawnUnit" class="panelbutton">
+            <ui:Label text="Spawn&#10;Unit" parse-escape-sequences="false" class="buttontext" style="flex-wrap: nowrap;" />
+        </ui:Button>
+        <ui:Button name="SpawnEnemy" class="panelbutton">
+            <ui:Label text="Spawn&#10;Enemy" class="buttontext" style="flex-wrap: nowrap;" />
+        </ui:Button>
+    </ui:VisualElement>
+</ui:UXML>
