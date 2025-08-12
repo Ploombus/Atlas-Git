@@ -2,6 +2,7 @@ using Managers;
 using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Mathematics;
 using Unity.NetCode;
 using Unity.Physics;
 using Unity.Transforms;
@@ -82,7 +83,7 @@ public class TesterUI : MonoBehaviour
 
                 if (hasEnoughResource1 && hasEnoughResource2 && buildMode)
                 {
-                    ComponentRequestQueue.BuildingModeEnd.Add(new AddComponentRequest());
+                    SpawnUnitRpcRequest(MouseWorldPosition.Instance.GetPosition(), 1);
                     resourceManager.RemoveResource(ResourceManager.ResourceType.Resource1, buildCost);
                     resourceManager.RemoveResource(ResourceManager.ResourceType.Resource2, buildCost);
                     return;
@@ -173,5 +174,18 @@ public class TesterUI : MonoBehaviour
             resourceManager.OnResourceChanged -= UpdateResourceCounter;
         }
     }
+
+    public void SpawnUnitRpcRequest(Vector3 position, int owner)
+    {
+        EntityManager em = WorldManager.GetClientWorld().EntityManager;
+        Entity rpc = em.CreateEntity();
+        em.AddComponentData(rpc, new SpawnBarracksRpc { position = position, owner = owner });
+        em.AddComponentData(rpc, new SendRpcCommandRequest());
+    }
+}
+public struct SpawnBarracksRpc : IRpcCommand
+{
+    public float3 position;
+    public int owner;
 }
 

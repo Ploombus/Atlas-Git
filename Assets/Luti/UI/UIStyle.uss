@@ -84,3 +84,6 @@
     border-bottom-color: rgb(107, 119, 171);
     color: rgb(164, 164, 164);
 }
+
+.SpawnerButton {
+}

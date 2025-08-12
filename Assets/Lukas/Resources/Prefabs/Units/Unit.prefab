@@ -100,13 +100,12 @@ GameObject:
   - component: {fileID: 1993517577862454306}
   - component: {fileID: 3170603440805504549}
   - component: {fileID: 3280851054378551528}
-  - component: {fileID: -4639729216667787260}
-  - component: {fileID: 116351004860959028}
-  - component: {fileID: 9198417916778331340}
   - component: {fileID: 2828302935095590142}
   - component: {fileID: 982902502282222320}
+  - component: {fileID: 447802268243658217}
+  - component: {fileID: -4639729216667787260}
   - component: {fileID: 164458981789568015}
-  - component: {fileID: 8065322889753870816}
+  - component: {fileID: 7775162417468945233}
   m_Layer: 6
   m_Name: Unit
   m_TagString: Untagged
@@ -168,44 +167,6 @@ MonoBehaviour:
   UseSingleBaseline: 0
   RollbackPredictedSpawnedGhostState: 0
   RollbackPredictionOnStructuralChanges: 1
---- !u!114 &-4639729216667787260
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2945860430356742780}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 4da1a775236be0940bd776f845ae6e90, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
---- !u!114 &116351004860959028
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2945860430356742780}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 287e920df9539434da051ee0cf4a62a6, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
---- !u!114 &9198417916778331340
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2945860430356742780}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: ff89e475bbffa2a4a8ed8f5fb99ae863, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  moveSpeed: 5
-  rotationSpeed: 5
 --- !u!136 &2828302935095590142
 CapsuleCollider:
   m_ObjectHideFlags: 0
@@ -256,6 +217,34 @@ Rigidbody:
   m_Interpolate: 0
   m_Constraints: 0
   m_CollisionDetection: 1
+--- !u!114 &447802268243658217
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2945860430356742780}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8e6cabe67042a1a408473d270f614652, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerAuthoring
+  color: {r: 1, g: 1, b: 1, a: 1}
+--- !u!114 &-4639729216667787260
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2945860430356742780}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4da1a775236be0940bd776f845ae6e90, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  UnitGameObjectPrefab: {fileID: 1782702501690864755, guid: 60770bdb4dc667c45bea53db0339dc05, type: 3}
+  moveSpeed: 5
+  rotationSpeed: 5
 --- !u!114 &164458981789568015
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -270,7 +259,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   selectorGameObject: {fileID: 2506389872397688974}
   showScale: 0.1
---- !u!114 &8065322889753870816
+--- !u!114 &7775162417468945233
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -279,7 +268,10 @@ MonoBehaviour:
   m_GameObject: {fileID: 2945860430356742780}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 345d2e8af23f6c54695d9303f84650fb, type: 3}
+  m_Script: {fileID: 11500000, guid: 1c4401133300fa54e97011dd1e172368, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::UnitAnimatorAuthoring
-  UnitGameObjectPrefab: {fileID: 1782702501690864755, guid: 60770bdb4dc667c45bea53db0339dc05, type: 3}
+  m_EditorClassIdentifier: Assembly-CSharp::UnitCombatAuthoring
+  detectRadius: 6
+  attackRange: 2
+  hitchance: 0.75
+  attacksPerSecond: 1

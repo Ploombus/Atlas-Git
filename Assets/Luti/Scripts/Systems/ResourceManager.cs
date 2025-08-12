@@ -28,7 +28,6 @@ public class ResourceManager : MonoBehaviour
         }
 
         resources[type] += amount;
-        Debug.Log($"Added {amount} of {type}. New total: {resources[type]}");
         OnResourceChanged?.Invoke(type, resources[type]);
     }
 

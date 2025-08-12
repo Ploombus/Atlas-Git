@@ -3,6 +3,7 @@ using UnityEngine.UIElements;
 using Managers;
 using Unity.Entities;
 using Unity.NetCode;
+using Unity.Mathematics;
 
 public class UIPanel : MonoBehaviour
 {
@@ -16,6 +17,7 @@ public class UIPanel : MonoBehaviour
     bool lockT;
     bool formationT;
     bool spawnMyUnitT;
+    bool spawnEnemyUnitT;
     Color baseColor;
 
     private void OnEnable()
@@ -34,18 +36,28 @@ public class UIPanel : MonoBehaviour
         lockFormation.RegisterCallback<ClickEvent>(LockFormationButton);
         formations.RegisterCallback<ClickEvent>(FormationsButton);
         spawnUnit.RegisterCallback<ClickEvent>(SpawnMyUnit);
-        //spawnEnemy.RegisterCallback<ClickEvent>(SpawnNeutralUnit);
+        spawnEnemy.RegisterCallback<ClickEvent>(SpawnEnemyUnit);
     }
 
     public void Update()
     {
-        if (spawnMyUnitT && Input.GetMouseButtonDown(0) && !UnityEngine.EventSystems.EventSystem.current.IsPointerOverGameObject())
+        if (spawnMyUnitT)
         {
-            var mousePosition = MouseWorldPosition.Instance.GetPosition();
-            SpawnUnitRpcRequest(mousePosition);
+            if (Input.GetMouseButtonDown(0) && !UnityEngine.EventSystems.EventSystem.current.IsPointerOverGameObject())
+            {
+                var mousePosition = MouseWorldPosition.Instance.GetPosition();
+                SpawnUnitRpcRequest(mousePosition, 1);
+            }
+        }
+        if (spawnEnemyUnitT)
+        {
+            if (Input.GetMouseButtonDown(0) && !UnityEngine.EventSystems.EventSystem.current.IsPointerOverGameObject())
+            {
+                 var mousePosition = MouseWorldPosition.Instance.GetPosition();
+                 SpawnUnitRpcRequest(mousePosition, -1);
+            }
         }
     }
-
 
     public void LockFormationButton(ClickEvent evt)
     {
@@ -77,9 +89,12 @@ public class UIPanel : MonoBehaviour
 
     public void SpawnMyUnit(ClickEvent evt)
     {
-        spawnMyUnitT = !spawnMyUnitT;
-
         var spawnUnit = root.Q<VisualElement>("SpawnUnit");
+        var spawnEnemy = root.Q<VisualElement>("SpawnEnemy");
+
+        spawnMyUnitT = !spawnMyUnitT;
+        spawnEnemyUnitT = false;
+        spawnEnemy.style.backgroundColor = baseColor;
 
         if (spawnMyUnitT)
         {
@@ -91,12 +106,30 @@ public class UIPanel : MonoBehaviour
         }
 
     }
+    public void SpawnEnemyUnit(ClickEvent evt)
+    {
+        var spawnUnit = root.Q<VisualElement>("SpawnUnit");
+        var spawnEnemy = root.Q<VisualElement>("SpawnEnemy");
+        
+        spawnEnemyUnitT = !spawnEnemyUnitT;
+        spawnMyUnitT = false;
+        spawnUnit.style.backgroundColor = baseColor;
 
-    public void SpawnUnitRpcRequest(Vector3 position)
+        if (spawnEnemyUnitT)
+        {
+            spawnEnemy.style.backgroundColor = Color.red;
+        }
+        else
+        {
+            spawnEnemy.style.backgroundColor = baseColor;
+        }
+    }
+
+    public void SpawnUnitRpcRequest(Vector3 position, int owner)
     {
         var em = WorldManager.GetClientWorld().EntityManager;
         var rpc = em.CreateEntity();
-        em.AddComponentData(rpc, new SpawnUnitRpc { position = position });
+        em.AddComponentData(rpc, new SpawnUnitRpc { position = position, owner = owner });
         em.AddComponentData(rpc, new SendRpcCommandRequest());
     }
 
@@ -106,4 +139,10 @@ public static class FormationUIState
 {
     public static Formations SelectedFormation = Formations.Tight;
     public static bool IsLocked = false;
+}
+
+public struct SpawnUnitRpc : IRpcCommand
+{
+    public float3 position;
+    public int owner;
 }

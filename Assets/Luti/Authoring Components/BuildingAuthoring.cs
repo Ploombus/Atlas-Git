@@ -6,6 +6,7 @@ class BuildingAuthoring : MonoBehaviour
     [SerializeField] private int buildTime;
     [SerializeField] private int radius;
     [SerializeField] private bool spawnRequested;
+    [SerializeField] private GameObject barracksGameObjectPrefab;
 
 
     public class Baker : Baker<BuildingAuthoring>
@@ -25,6 +26,7 @@ class BuildingAuthoring : MonoBehaviour
              
 
             });
+            AddComponentObject(entity, new UnitGameObjectPrefab { Value = authoring.barracksGameObjectPrefab });
         }
 
     }
@@ -42,3 +44,11 @@ public struct UnitSpawnFromBuilding : IComponentData
     public bool spawnRequested; // We can just toggle this true when UI button is pressed
 }
 
+public sealed class BarracksGameObjectPrefab : IComponentData
+{
+    public GameObject Value;
+}
+public sealed class BarracksAnimatorReference : IComponentData
+{
+    public Animator Value;
+}

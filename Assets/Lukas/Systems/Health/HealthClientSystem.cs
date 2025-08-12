@@ -18,7 +18,7 @@ public partial struct HealthClientSystem : ISystem
 
             if (SystemAPI.HasComponent<GhostOwnerIsLocal>(entity))
             {
-                // Predicted: current + pending change (do NOT write back to HealthState)
+                // Predicted: current + pending change
                 var predictedStage = HealthStageUtil.ApplyDelta(
                     healthState.ValueRO.currentStage,
                     healthState.ValueRO.healthChange,

@@ -27,7 +27,8 @@ public partial struct HealthSystem_Server : ISystem
             //Dead
             if (newStage == HealthStage.Dead)
             {
-                buffer.DestroyEntity(entity);
+                if (!SystemAPI.HasComponent<PendingDespawn>(entity))
+                    buffer.AddComponent(entity, new PendingDespawn { seconds = 0.25f });
             }
         }
 
@@ -54,8 +55,24 @@ public partial struct HealthSystem_Server : ISystem
 
             unitModifiers.ValueRW.moveSpeedMultiplier = speedMultiplier;
         }
-        
+
+        //Cleanup
+        float dt = SystemAPI.Time.DeltaTime;
+
+        foreach (var (pending, entity) in
+                SystemAPI.Query<RefRW<PendingDespawn>>().WithEntityAccess())
+        {
+            pending.ValueRW.seconds -= dt;
+            if (pending.ValueRO.seconds <= 0f)
+                buffer.DestroyEntity(entity);
+        }
+
         buffer.Playback(state.EntityManager);
         buffer.Dispose();
     }
+}
+
+public struct PendingDespawn : IComponentData
+{
+    public float seconds;
 }

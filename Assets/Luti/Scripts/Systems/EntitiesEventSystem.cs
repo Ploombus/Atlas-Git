@@ -9,6 +9,8 @@ using Unity.Transforms;
 using UnityEditorInternal;
 using UnityEngine;
 using UnityEngine.InputSystem.Processors;
+using UnityEngine.LightTransport;
+using static Unity.Entities.EntitiesJournaling;
 
 [WorldSystemFilter(WorldSystemFilterFlags.ServerSimulation)]
 partial struct EntitiesEventSystem : ISystem
@@ -17,34 +19,52 @@ partial struct EntitiesEventSystem : ISystem
     public void OnCreate(ref SystemState state)
     {
         state.RequireForUpdate<EntitiesReferencesLuti>();
-        state.RequireForUpdate<UnitTargetNetcode>();
 
     }
 
     public void OnUpdate(ref SystemState state)
     {
 
-        if (ComponentRequestQueue.BuildingModeEnd.Count == 0)
-            return;
 
-        var prefab = SystemAPI.GetSingleton<EntitiesReferencesLuti>();
+
+        var prefabRef = SystemAPI.GetSingleton<EntitiesReferencesLuti>();
         var spawnEntityBuffer = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
 
-        foreach ((RefRO<NetworkId> netId, Entity entity)          //netID = Player number
-                 in SystemAPI.Query<RefRO<NetworkId>>()
-                             .WithEntityAccess())
+
+        foreach (var (rpc, request, rpcEntity)
+         in SystemAPI.Query<RefRO<SpawnBarracksRpc>, RefRO<ReceiveRpcCommandRequest>>().WithEntityAccess())
         {
-            Entity spawnedEntity = spawnEntityBuffer.Instantiate(prefab.buildingPrefabEntity);
-            Vector3 spawnPosition = MouseWorldPosition.Instance.GetPosition();
-            spawnEntityBuffer.SetComponent(spawnedEntity, LocalTransform.FromPosition(spawnPosition));
-            spawnEntityBuffer.AddComponent(spawnedEntity, new GhostOwner { NetworkId = netId.ValueRO.Value });
-            spawnEntityBuffer.AppendToBuffer(entity, new LinkedEntityGroup { Value = spawnedEntity });
+            // Find who sent it
+            var connection = request.ValueRO.SourceConnection;
+            var owner = rpc.ValueRO.owner;
+            var netId = SystemAPI.GetComponent<NetworkId>(connection).Value;
+            float3 position = rpc.ValueRO.position;
+
+            var unitEntity = spawnEntityBuffer.Instantiate(prefabRef.buildingPrefabEntity);
+
+            spawnEntityBuffer.SetComponent(unitEntity, LocalTransform.FromPosition(position));
+            
+
+            if (owner == 1)
+            {
+                spawnEntityBuffer.AddComponent(unitEntity, new GhostOwner { NetworkId = netId });
+            }
+            if (owner == -1)
+            {
+                spawnEntityBuffer.AddComponent(unitEntity, new GhostOwner { NetworkId = -1 });
+            }
+
+            var colorId = (owner == -1) ? -1 : netId;
+            var rgba = PlayerColorUtil.FromId(colorId);
+            spawnEntityBuffer.SetComponent(unitEntity, new Player { PlayerColor = rgba });
+
+            // consume RPC
+            spawnEntityBuffer.DestroyEntity(rpcEntity);
         }
 
         spawnEntityBuffer.Playback(state.EntityManager);
         spawnEntityBuffer.Dispose();
-        ComponentRequestQueue.BuildingModeEnd.Clear();
-        ComponentRequestQueue.BuildingModeStart.Clear();
+
     }
 }
 
