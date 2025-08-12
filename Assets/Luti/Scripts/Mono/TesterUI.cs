@@ -62,8 +62,11 @@ public class TesterUI : MonoBehaviour
         //Building UI
         buildingUI = root.Q<VisualElement>("BuildingUIPanel");
         buildingUI.style.display = DisplayStyle.None;
-        //spawnUnitButton = root.Q<Button>("UnitButton");
-        //spawnUnitButton.clicked += OnSpawnUnitClicked;
+
+        // Enable the UnitButton functionality
+        spawnUnitButton = root.Q<Button>("UnitButton");
+        spawnUnitButton.RegisterCallback<ClickEvent>(OnSpawnUnitClicked);
+
 
         resource1Input.RegisterCallback<ChangeEvent<int>>((evt) => { resource1Input.value = evt.newValue; });   //update value automatically when changed
         resource2Input.RegisterCallback<ChangeEvent<int>>((evt) => { resource2Input.value = evt.newValue; });   //update value automatically when changed
@@ -76,7 +79,7 @@ public class TesterUI : MonoBehaviour
         if (Input.GetMouseButtonDown(0) && buildMode)
         {       
 
-                int buildCost = 10;
+                int buildCost = 0;
 
                 bool hasEnoughResource1 = counter1Amount.value >= buildCost;
                 bool hasEnoughResource2 = counter2Amount.value >= buildCost;
@@ -110,6 +113,7 @@ public class TesterUI : MonoBehaviour
 
     {
         buildMode = !buildMode;
+        UpdateSpawnerButtonStyle();
     }
 
     private void AddResource1Amount(ClickEvent clickEvent) 
@@ -149,21 +153,22 @@ public class TesterUI : MonoBehaviour
         buildingUI.style.display = DisplayStyle.None;
     }
 
-    private void OnSpawnUnitClicked()
+    private void OnSpawnUnitClicked(ClickEvent evt)
     {
-      /*  if (selectedBuilding != Entity.Null && entityManager.Exists(selectedBuilding))
+        if (selectedBuilding != Entity.Null)
         {
-            if (!entityManager.HasComponent<UnitSpawnFromBuilding>(selectedBuilding))
-            {
-                entityManager.AddComponentData(selectedBuilding, new UnitSpawnFromBuilding { spawnRequested = true });
-            }
-            else
-            {
-                var comp = entityManager.GetComponentData<UnitSpawnFromBuilding>(selectedBuilding);
-                comp.spawnRequested = true;
-                entityManager.SetComponentData(selectedBuilding, comp);
-            }
-        }*/
+            // Send RPC to spawn unit from the selected building
+            var em = WorldManager.GetClientWorld().EntityManager;
+            var rpc = em.CreateEntity();
+            em.AddComponentData(rpc, new SpawnUnitFromBuildingRpc { buildingEntity = selectedBuilding });
+            em.AddComponentData(rpc, new SendRpcCommandRequest());
+
+            Debug.Log("Requested unit spawn from selected building");
+        }
+        else
+        {
+            Debug.Log("No building selected to spawn unit from");
+        }
     }
 
     private void OnDestroy()
@@ -182,6 +187,26 @@ public class TesterUI : MonoBehaviour
         em.AddComponentData(rpc, new SpawnBarracksRpc { position = position, owner = owner });
         em.AddComponentData(rpc, new SendRpcCommandRequest());
     }
+
+    private void UpdateSpawnerButtonStyle()
+    {
+        var spawnerButtonElement = root.Q<Button>("SpawnerButton");
+
+        if (buildMode)
+        {
+            if (!spawnerButtonElement.ClassListContains("SpawnerButtonClicked"))
+            {
+                spawnerButtonElement.AddToClassList("SpawnerButtonClicked");
+            }
+        }
+        else
+        {
+            if (spawnerButtonElement.ClassListContains("SpawnerButtonClicked"))
+            {
+                spawnerButtonElement.RemoveFromClassList("SpawnerButtonClicked");
+            }
+        }
+    }
 }
 public struct SpawnBarracksRpc : IRpcCommand
 {
@@ -189,3 +214,7 @@ public struct SpawnBarracksRpc : IRpcCommand
     public int owner;
 }
 
+public struct SpawnUnitFromBuildingRpc : IRpcCommand
+{
+    public Entity buildingEntity;
+}

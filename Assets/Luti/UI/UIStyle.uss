@@ -87,3 +87,7 @@
 
 .SpawnerButton {
 }
+
+.SpawnerButtonClicked {
+    background-color: rgb(85, 147, 69);
+}
