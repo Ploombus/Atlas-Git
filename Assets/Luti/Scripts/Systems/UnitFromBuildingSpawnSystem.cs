@@ -73,7 +73,7 @@ public partial struct BuildingUnitSpawnSystem : ISystem
                 }
 
                 // Calculate spawn position
-                float3 spawnPosition = FindValidSpawnPosition(buildingPosition, state);
+                float3 spawnPosition = FindValidSpawnPosition(buildingPosition, ref state);
 
                 // Add to queue
                 var queuedSpawnEntity = buffer.CreateEntity();
@@ -84,7 +84,6 @@ public partial struct BuildingUnitSpawnSystem : ISystem
                     spawnPosition = spawnPosition
                 });
 
-                Debug.Log($"Added unit to spawn queue for building {buildingEntity}");
             }
             else
             {
@@ -126,7 +125,6 @@ public partial struct BuildingUnitSpawnSystem : ISystem
                         // Remove from queue
                         buffer.DestroyEntity(queuedEntity);
 
-                        Debug.Log($"Started spawning unit for building {buildingEntity}. Remaining in queue: {spawnQueue.ValueRO.unitsInQueue}");
                         break; // Only process one unit at a time
                     }
                 }
@@ -171,7 +169,6 @@ public partial struct BuildingUnitSpawnSystem : ISystem
                         buffer.SetComponent(buildingEntity, spawnQueue);
                     }
 
-                    Debug.Log($"Unit spawned from building for player {pendingSpawn.ValueRO.ownerNetworkId} at position {pendingSpawn.ValueRO.spawnPosition}");
                 }
                 else
                 {
@@ -188,7 +185,7 @@ public partial struct BuildingUnitSpawnSystem : ISystem
     }
 
     // Helper method to find a valid spawn position around the building
-    private float3 FindValidSpawnPosition(float3 buildingPosition, SystemState state)
+    private float3 FindValidSpawnPosition(float3 buildingPosition, ref SystemState state)
     {
         float3[] offsets = new float3[]
         {

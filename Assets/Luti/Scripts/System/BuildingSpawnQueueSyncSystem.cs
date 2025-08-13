@@ -6,10 +6,6 @@ using UnityEngine;
 [WorldSystemFilter(WorldSystemFilterFlags.ServerSimulation)]
 public partial struct BuildingSpawnQueueSyncSystem : ISystem
 {
-    public void OnCreate(ref SystemState state)
-    {
-        Debug.Log("[SERVER] BuildingSpawnQueueSyncSystem created");
-    }
 
     public void OnUpdate(ref SystemState state)
     {
@@ -36,14 +32,12 @@ public partial struct BuildingSpawnQueueSyncSystem : ISystem
                 // Update existing client component
                 buffer.SetComponent(entity, clientData);
                 updatedCount++;
-                Debug.Log($"[SERVER SYNC] Updated entity {entity} with queue={clientData.unitsInQueue}, spawning={clientData.isCurrentlySpawning}");
             }
             else
             {
                 // Add new client component
                 buffer.AddComponent(entity, clientData);
                 addedCount++;
-                Debug.Log($"[SERVER SYNC] Added client component to entity {entity} with queue={clientData.unitsInQueue}, spawning={clientData.isCurrentlySpawning}");
             }
         }
 
@@ -54,13 +48,9 @@ public partial struct BuildingSpawnQueueSyncSystem : ISystem
         {
             buffer.RemoveComponent<BuildingSpawnQueueClient>(entity);
             removedCount++;
-            Debug.Log($"[SERVER SYNC] Removed client component from entity {entity}");
         }
 
-        if (syncedCount > 0 || removedCount > 0)
-        {
-            Debug.Log($"[SERVER SYNC] Processed {syncedCount} entities (added: {addedCount}, updated: {updatedCount}, removed: {removedCount})");
-        }
+     
 
         buffer.Playback(state.EntityManager);
         buffer.Dispose();

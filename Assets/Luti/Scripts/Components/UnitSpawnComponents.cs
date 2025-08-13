@@ -18,16 +18,6 @@ public struct BuildingSpawnQueueClient : IComponentData, IEnableableComponent
     [GhostField] public bool isCurrentlySpawning;
 }
 
-// Alternative: If the above doesn't work, try this simpler version
-/*
-public struct BuildingSpawnQueueClient : IComponentData
-{
-    [GhostField] public int unitsInQueue;
-    [GhostField] public bool isCurrentlySpawning;
-}
-*/
-
-// Other existing components (no changes needed)
 public struct PendingUnitSpawn : IComponentData
 {
     public Entity buildingEntity;

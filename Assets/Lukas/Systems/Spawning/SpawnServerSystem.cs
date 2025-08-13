@@ -36,15 +36,15 @@ partial struct SpawnServerSystem : ISystem
 
             for (int i = 0; i < 5; i++)
             {
-                float3 position = basePosition + new float3(spacing * i, 0f, 0f);
+                float3 unitPosition = basePosition + new float3(spacing * i, 0f, 0f);
                 var unitEntity = buffer.Instantiate(unitRef.unitPrefabEntity);
                 buffer.AddComponent(unitEntity, new GhostOwner { NetworkId = netId.ValueRO.Value });
-                buffer.SetComponent(unitEntity, LocalTransform.FromPosition(position));
+                buffer.SetComponent(unitEntity, LocalTransform.FromPosition(unitPosition));
 
                 //Setting without changing speed etc.
                 buffer.SetComponent(unitEntity, new UnitMover
                 {
-                    targetPosition = position,
+                    targetPosition = unitPosition,
                     activeTarget = false
                 });
 

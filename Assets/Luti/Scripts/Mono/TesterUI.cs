@@ -162,8 +162,6 @@ public class TesterUI : MonoBehaviour
             var rpc = em.CreateEntity();
             em.AddComponentData(rpc, new SpawnUnitFromBuildingRpc { buildingEntity = selectedBuilding });
             em.AddComponentData(rpc, new SendRpcCommandRequest());
-
-            Debug.Log("Requested unit spawn from selected building");
         }
         else
         {
