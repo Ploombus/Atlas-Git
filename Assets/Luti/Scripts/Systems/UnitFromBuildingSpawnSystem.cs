@@ -5,8 +5,12 @@ using UnityEngine;
 using Unity.Mathematics;
 using Unity.Transforms;
 
+/// <summary>
+/// Complete UnitFromBuildingSpawnSystem with progress tracking integration
+/// Handles unit spawning from buildings with real-time progress updates for UI
+/// </summary>
 [WorldSystemFilter(WorldSystemFilterFlags.ServerSimulation)]
-public partial struct BuildingUnitSpawnSystem : ISystem
+public partial struct UnitFromBuildingSpawnSystem : ISystem
 {
     public void OnCreate(ref SystemState state)
     {
@@ -21,9 +25,26 @@ public partial struct BuildingUnitSpawnSystem : ISystem
         var buffer = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
         var unitReferences = SystemAPI.GetSingleton<EntitiesReferencesLukas>();
         float deltaTime = SystemAPI.Time.DeltaTime;
-        const float timeToSpawnUnit = 1.0f;
+        const float timeToSpawnUnit = 3.0f; // Increased for better progress visibility
 
         // Step 1: Handle new spawn unit from building requests (add to queue)
+        HandleNewSpawnRequests(ref state, buffer, timeToSpawnUnit);
+
+        // Step 2: Process buildings with spawn queues - start spawning if not already spawning
+        StartSpawningFromQueues(ref state, buffer, timeToSpawnUnit);
+
+        // Step 3: Process active pending spawns (countdown timers and spawn when ready)
+        UpdateSpawnProgress(ref state, buffer, deltaTime, unitReferences);
+
+        buffer.Playback(state.EntityManager);
+        buffer.Dispose();
+    }
+
+    /// <summary>
+    /// Handles new spawn requests and adds them to building queues
+    /// </summary>
+    private void HandleNewSpawnRequests(ref SystemState state, EntityCommandBuffer buffer, float timeToSpawnUnit)
+    {
         foreach (var (rpc, request, rpcEntity)
         in SystemAPI.Query<RefRO<SpawnUnitFromBuildingRpc>, RefRO<ReceiveRpcCommandRequest>>().WithEntityAccess())
         {
@@ -84,6 +105,7 @@ public partial struct BuildingUnitSpawnSystem : ISystem
                     spawnPosition = spawnPosition
                 });
 
+                Debug.Log($"Added unit to spawn queue for building {buildingEntity}. Queue size will be: {(SystemAPI.HasComponent<BuildingSpawnQueue>(buildingEntity) ? SystemAPI.GetComponent<BuildingSpawnQueue>(buildingEntity).unitsInQueue + 1 : 1)}");
             }
             else
             {
@@ -93,8 +115,13 @@ public partial struct BuildingUnitSpawnSystem : ISystem
             // consume RPC
             buffer.DestroyEntity(rpcEntity);
         }
+    }
 
-        // Step 2: Process buildings with spawn queues - start spawning if not already spawning
+    /// <summary>
+    /// Starts spawning from queues for buildings that aren't currently spawning
+    /// </summary>
+    private void StartSpawningFromQueues(ref SystemState state, EntityCommandBuffer buffer, float timeToSpawnUnit)
+    {
         foreach (var (spawnQueue, buildingEntity) in
                  SystemAPI.Query<RefRW<BuildingSpawnQueue>>().WithEntityAccess())
         {
@@ -125,14 +152,20 @@ public partial struct BuildingUnitSpawnSystem : ISystem
                         // Remove from queue
                         buffer.DestroyEntity(queuedEntity);
 
+                        Debug.Log($"Started spawning unit for building {buildingEntity}. Remaining in queue: {spawnQueue.ValueRO.unitsInQueue}");
                         break; // Only process one unit at a time
                     }
                 }
             }
         }
+    }
 
-        // Step 3: Process active pending spawns (countdown timers and spawn when ready)
-        foreach (var (pendingSpawn, entity) in
+    /// <summary>
+    /// Updates spawn progress and spawns units when timers complete
+    /// </summary>
+    private void UpdateSpawnProgress(ref SystemState state, EntityCommandBuffer buffer, float deltaTime, EntitiesReferencesLukas unitReferences)
+    {
+        foreach (var (pendingSpawn, pendingEntity) in
                  SystemAPI.Query<RefRW<PendingUnitSpawn>>().WithEntityAccess())
         {
             // Countdown the timer
@@ -147,28 +180,26 @@ public partial struct BuildingUnitSpawnSystem : ISystem
                 if (SystemAPI.Exists(buildingEntity))
                 {
                     // Spawn the unit
-                    var unitEntity = buffer.Instantiate(unitReferences.unitPrefabEntity);
-                    buffer.SetComponent(unitEntity, LocalTransform.FromPosition(pendingSpawn.ValueRO.spawnPosition));
-                    buffer.AddComponent(unitEntity, new GhostOwner { NetworkId = pendingSpawn.ValueRO.ownerNetworkId });
+                    SpawnUnit(ref state, buffer, pendingSpawn.ValueRO, unitReferences);
 
-                    buffer.SetComponent(unitEntity, new UnitMover
-                    {
-                        targetPosition = pendingSpawn.ValueRO.spawnPosition,
-                        activeTarget = false
-                    });
-
-                    // Set player color to match building owner
-                    var rgba = PlayerColorUtil.FromId(pendingSpawn.ValueRO.ownerNetworkId);
-                    buffer.SetComponent(unitEntity, new Player { PlayerColor = rgba });
-
-                    // Mark building as no longer spawning (safely check if component exists)
+                    // Update building spawn queue state
                     if (SystemAPI.HasComponent<BuildingSpawnQueue>(buildingEntity))
                     {
                         var spawnQueue = SystemAPI.GetComponent<BuildingSpawnQueue>(buildingEntity);
                         spawnQueue.isCurrentlySpawning = false;
-                        buffer.SetComponent(buildingEntity, spawnQueue);
-                    }
 
+                        // If no more units in queue, remove the component entirely
+                        if (spawnQueue.unitsInQueue <= 0)
+                        {
+                            buffer.RemoveComponent<BuildingSpawnQueue>(buildingEntity);
+                            Debug.Log($"Spawn queue completed for building {buildingEntity}");
+                        }
+                        else
+                        {
+                            buffer.SetComponent(buildingEntity, spawnQueue);
+                            Debug.Log($"Unit spawned for building {buildingEntity}. Units remaining in queue: {spawnQueue.unitsInQueue}");
+                        }
+                    }
                 }
                 else
                 {
@@ -176,29 +207,72 @@ public partial struct BuildingUnitSpawnSystem : ISystem
                 }
 
                 // Remove the pending spawn entity
-                buffer.DestroyEntity(entity);
+                buffer.DestroyEntity(pendingEntity);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Spawns a unit with proper components and positioning
+    /// </summary>
+    private void SpawnUnit(ref SystemState state, EntityCommandBuffer buffer, PendingUnitSpawn spawnData, EntitiesReferencesLukas unitReferences)
+    {
+        // Create the unit entity
+        var unitEntity = buffer.Instantiate(unitReferences.unitPrefabEntity);
+
+        // Set unit position
+        buffer.SetComponent(unitEntity, LocalTransform.FromPosition(spawnData.spawnPosition));
+
+        // Set unit owner
+        buffer.AddComponent(unitEntity, new GhostOwner { NetworkId = spawnData.ownerNetworkId });
+
+        // Set unit color based on owner
+        var rgba = PlayerColorUtil.FromId(spawnData.ownerNetworkId);
+        buffer.SetComponent(unitEntity, new Player { PlayerColor = rgba });
+
+        // Set initial unit mover state
+        buffer.SetComponent(unitEntity, new UnitMover
+        {
+            targetPosition = spawnData.spawnPosition,
+            activeTarget = false
+        });
+
+        // Check for rally point and move unit there if set
+        if (SystemAPI.HasComponent<BuildingRallyPoint>(spawnData.buildingEntity))
+        {
+            var rallyPoint = SystemAPI.GetComponent<BuildingRallyPoint>(spawnData.buildingEntity);
+            if (rallyPoint.hasRallyPoint)
+            {
+                buffer.AddComponent(unitEntity, new MoveToRallyPoint
+                {
+                    targetPosition = rallyPoint.rallyPosition
+                });
             }
         }
 
-        buffer.Playback(state.EntityManager);
-        buffer.Dispose();
+        Debug.Log($"Unit spawned successfully for building {spawnData.buildingEntity} at position {spawnData.spawnPosition}");
     }
 
-    // Helper method to find a valid spawn position around the building
+    /// <summary>
+    /// Helper method to find a valid spawn position around the building
+    /// </summary>
     private float3 FindValidSpawnPosition(float3 buildingPosition, ref SystemState state)
     {
+        // Array of potential spawn offsets around the building
         float3[] offsets = new float3[]
         {
-            new float3(3f, 0f, 0f),   // Right
-            new float3(-3f, 0f, 0f),  // Left
-            new float3(0f, 0f, 3f),   // Front
-            new float3(0f, 0f, -3f),  // Back
-            new float3(3f, 0f, 3f),   // Front-right
-            new float3(-3f, 0f, 3f),  // Front-left
-            new float3(3f, 0f, -3f),  // Back-right
-            new float3(-3f, 0f, -3f), // Back-left
+            new float3(4f, 0f, 0f),   // Right
+            new float3(-4f, 0f, 0f),  // Left
+            new float3(0f, 0f, 4f),   // Front
+            new float3(0f, 0f, -4f),  // Back
+            new float3(4f, 0f, 4f),   // Front-right
+            new float3(-4f, 0f, 4f),  // Front-left
+            new float3(4f, 0f, -4f),  // Back-right
+            new float3(-4f, 0f, -4f), // Back-left
         };
 
+        // For now, just use the first position (right side of building)
+        // You can enhance this with collision detection or random selection
         return buildingPosition + offsets[0];
     }
 }

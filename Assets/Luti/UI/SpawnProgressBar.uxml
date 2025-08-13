@@ -1,0 +1,14 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="False">
+    <Style src="project://database/Assets/Luti/UI/SpawnProgressBar.uss?fileID=7433441132597879392&amp;guid=f0977b84b1fc0324d982134b36c31913&amp;type=3#SpawnProgressBar" />
+    <ui:VisualElement name="SpawnProgressBar" class="progress-container">
+        <ui:VisualElement name="QueueInfo" class="queue-info">
+            <ui:Label name="QueueCounter" text="1/3" class="queue-counter" />
+            <ui:Label name="UnitInfo" text="Spawning Unit" class="unit-info" />
+        </ui:VisualElement>
+        <ui:VisualElement name="ProgressBarContainer" class="progress-bar-container">
+            <ui:VisualElement name="ProgressBackground" class="progress-background">
+                <ui:VisualElement name="ProgressFill" class="progress-fill" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+    </ui:VisualElement>
+</ui:UXML>
