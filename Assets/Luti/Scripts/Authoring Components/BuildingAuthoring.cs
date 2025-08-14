@@ -7,6 +7,9 @@ class BuildingAuthoring : MonoBehaviour
     [SerializeField] private int radius;
     [SerializeField] private bool spawnRequested;
     [SerializeField] private GameObject barracksGameObjectPrefab;
+    [SerializeField] private int unitResource1Cost;
+    [SerializeField] private int unitResource2Cost;
+
 
 
     public class Baker : Baker<BuildingAuthoring>
@@ -27,6 +30,14 @@ class BuildingAuthoring : MonoBehaviour
 
             });
             AddComponentObject(entity, new UnitGameObjectPrefab { Value = authoring.barracksGameObjectPrefab });
+
+            AddComponent(entity, new UnitSpawnCost
+            {
+                unitResource1Cost = authoring.unitResource1Cost,
+                unitResource2Cost = authoring.unitResource2Cost,
+
+
+            });
         }
 
     }
@@ -51,4 +62,9 @@ public sealed class BarracksGameObjectPrefab : IComponentData
 public sealed class BarracksAnimatorReference : IComponentData
 {
     public Animator Value;
+}
+public struct UnitSpawnCost : IComponentData
+{
+    public int unitResource1Cost;
+    public int unitResource2Cost;
 }

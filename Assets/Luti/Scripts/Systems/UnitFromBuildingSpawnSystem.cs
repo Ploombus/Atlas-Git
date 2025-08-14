@@ -21,7 +21,7 @@ public partial struct UnitFromBuildingSpawnSystem : ISystem
         var buffer = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
         var unitReferences = SystemAPI.GetSingleton<EntitiesReferencesLukas>();
         float deltaTime = SystemAPI.Time.DeltaTime;
-        const float timeToSpawnUnit = 3.0f; // Increased for better progress visibility
+        const float timeToSpawnUnit = 3.0f;
 
         // Step 1: Handle new spawn unit from building requests (add to queue)
         HandleNewSpawnRequests(ref state, buffer, timeToSpawnUnit);
@@ -97,7 +97,6 @@ public partial struct UnitFromBuildingSpawnSystem : ISystem
                     ownerNetworkId = buildingOwnerId,
                     spawnPosition = spawnPosition
                 });
-
             }
             else
             {
@@ -174,14 +173,14 @@ public partial struct UnitFromBuildingSpawnSystem : ISystem
                         var spawnQueue = SystemAPI.GetComponent<BuildingSpawnQueue>(buildingEntity);
                         spawnQueue.isCurrentlySpawning = false;
 
-                        // If no more units in queue, remove the component entirely
-                        if (spawnQueue.unitsInQueue <= 0)
+                        // Always set the component, even if queue is empty
+                        // This avoids trying to remove a component that might not exist
+                        buffer.SetComponent(buildingEntity, spawnQueue);
+
+                        // Remove progress component if queue is empty
+                        if (spawnQueue.unitsInQueue <= 0 && SystemAPI.HasComponent<BuildingSpawnProgress>(buildingEntity))
                         {
-                            buffer.RemoveComponent<BuildingSpawnQueue>(buildingEntity);
-                        }
-                        else
-                        {
-                            buffer.SetComponent(buildingEntity, spawnQueue);
+                            buffer.RemoveComponent<BuildingSpawnProgress>(buildingEntity);
                         }
                     }
                 }
@@ -217,7 +216,6 @@ public partial struct UnitFromBuildingSpawnSystem : ISystem
             targetPosition = spawnData.spawnPosition,
             activeTarget = false
         });
-
     }
 
     private float3 FindValidSpawnPosition(float3 buildingPosition, ref SystemState state)
@@ -235,6 +233,6 @@ public partial struct UnitFromBuildingSpawnSystem : ISystem
             new float3(-4f, 0f, -4f), // Back-left
         };
 
-        return buildingPosition + offsets[0]; 
+        return buildingPosition + offsets[0];
     }
 }

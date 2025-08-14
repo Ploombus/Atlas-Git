@@ -23,21 +23,60 @@ public partial struct BuildingUISystem : ISystem
 
     public void OnUpdate(ref SystemState state)
     {
-        // Get the local player's resources from TesterUI's ResourceManager
-        ResourceManager resourceManager = null;
+        // Get the local player's resources from ResourceManager singleton
+        var resourceManager = ResourceManager.Instance;
+        if (resourceManager == null) return;
+
+        int currentResource1 = resourceManager.GetResourceAmount(ResourceManager.ResourceType.Resource1);
+        int currentResource2 = resourceManager.GetResourceAmount(ResourceManager.ResourceType.Resource2);
+
+        // Check for resource changes
+        if (currentResource1 != lastResource1 || currentResource2 != lastResource2)
+        {
+            lastResource1 = currentResource1;
+            lastResource2 = currentResource2;
+
+            // If we have a selected building, update affordability
+            if (lastSelectedBuilding != Entity.Null && state.EntityManager.Exists(lastSelectedBuilding))
+            {
+                UpdateBuildingAffordability(ref state, lastSelectedBuilding, currentResource1, currentResource2);
+            }
+        }
+
+        // Alternative: Check if TesterUI has a selected building (for SelectionManager compatibility)
+        if (TesterUI.Instance != null)
+        {
+            var testerSelectedBuilding = TesterUI.Instance.GetSelectedBuilding();
+            if (testerSelectedBuilding != Entity.Null && testerSelectedBuilding != lastSelectedBuilding)
+            {
+                if (state.EntityManager.Exists(testerSelectedBuilding))
+                {
+                    lastSelectedBuilding = testerSelectedBuilding;
+                    HandleBuildingSelection(ref state, testerSelectedBuilding, currentResource1, currentResource2);
+                }
+            }
+            else if (testerSelectedBuilding == Entity.Null && lastSelectedBuilding != Entity.Null)
+            {
+                // TesterUI deselected
+                lastSelectedBuilding = Entity.Null;
+                BuildingUIEvents.RaiseBuildingDeselected();
+            }
+        }
+        
         if (TesterUI.Instance != null)
         {
             var testerUI = TesterUI.Instance;
-            resourceManager = ResourceManager.Instance;
+            resourceManager = testerUI.GetComponent<ResourceManager>();
         }
 
         if (resourceManager == null)
         {
+            Debug.LogWarning("BuildingUISystem: ResourceManager not found");
             return;
         }
 
-        int currentResource1 = resourceManager.GetResourceAmount(ResourceManager.ResourceType.Resource1);
-        int currentResource2 = resourceManager.GetResourceAmount(ResourceManager.ResourceType.Resource2);
+        currentResource1 = resourceManager.GetResourceAmount(ResourceManager.ResourceType.Resource1);
+        currentResource2 = resourceManager.GetResourceAmount(ResourceManager.ResourceType.Resource2);
 
         // Check for resource changes
         if (currentResource1 != lastResource1 || currentResource2 != lastResource2)
@@ -77,15 +116,22 @@ public partial struct BuildingUISystem : ISystem
 
             if (entity != lastSelectedBuilding)
             {
+                Debug.Log($"BuildingUISystem: New building selected - Entity {entity}");
                 lastSelectedBuilding = entity;
                 HandleBuildingSelection(ref state, entity, currentResource1, currentResource2);
             }
         }
 
+        // Debug output
+        if (buildingCount > 0)
+        {
+            Debug.Log($"BuildingUISystem: Buildings: {buildingCount}, Selected: {selectedCount}");
+        }
 
         // If we had a selected building but don't anymore, it was deselected
         if (lastSelectedBuilding != Entity.Null && currentlySelectedBuilding == Entity.Null)
         {
+            Debug.Log("BuildingUISystem: Building deselected");
             lastSelectedBuilding = Entity.Null;
             BuildingUIEvents.RaiseBuildingDeselected();
         }

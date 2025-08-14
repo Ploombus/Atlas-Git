@@ -39,7 +39,6 @@ public partial struct UnitSpawnProgressSystem : ISystem
                 var progress = SystemAPI.GetComponent<SpawnProgress>(building);
                 progress.unitsInQueue += newSpawns;
                 buffer.SetComponent(building, progress);
-                Debug.Log($"[BULLETPROOF] Added {newSpawns} units to building {building}. Total queue: {progress.unitsInQueue}");
             }
             else
             {

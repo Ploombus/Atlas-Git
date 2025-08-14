@@ -91,3 +91,38 @@
 .SpawnerButtonClicked {
     background-color: rgb(85, 147, 69);
 }
+
+.insufficient-resources {
+    opacity: 0.5;
+    background-color: rgba(255, 0, 0, 0.1);
+    border-color: rgba(255, 0, 0, 0.3);
+    color: rgb(255, 0, 0);
+}
+
+.insufficient-resources:hover {
+    background-color: rgba(255, 0, 0, 0.15);
+}
+
+.BottomPanelButton:enabled {
+    opacity: 1;
+    transition: opacity 0.2s ease;
+}
+
+.BottomPanelButton:disabled {
+    opacity: 0.4;
+    background-color: rgba(128, 128, 128, 0.2);
+}
+
+.BottomPanelButton:enabled:hover {
+    background-color: rgba(0, 255, 0, 0.1);
+    border-color: rgba(0, 255, 0, 0.3);
+    transform: ;
+    transition: transform 0.1s ease;
+}
+
+.unit-cost-label {
+    font-size: 10px;
+    color: rgb(255, 215, 0);
+    margin-top: 2px;
+    -unity-text-align: middle-center;
+}

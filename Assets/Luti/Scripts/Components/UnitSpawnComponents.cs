@@ -10,7 +10,6 @@ public struct BuildingSpawnQueue : IComponentData
     public float timeToSpawnUnit;
 }
 
-// Client-side networked component - FIXED VERSION
 [GhostComponent(PrefabType = GhostPrefabType.All, OwnerSendType = SendToOwnerType.All)]
 public struct BuildingSpawnQueueClient : IComponentData, IEnableableComponent
 {

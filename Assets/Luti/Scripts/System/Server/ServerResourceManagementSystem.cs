@@ -51,3 +51,10 @@ public partial struct ServerResourceManagementSystem : ISystem
         buffer.Dispose();*/
     }
 }
+
+// RPC to refund resources to client if server validation fails
+public struct ResourceRefundRpc : IRpcCommand
+{
+    public int resource1Amount;
+    public int resource2Amount;
+}
