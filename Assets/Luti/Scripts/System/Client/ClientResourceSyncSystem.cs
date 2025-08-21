@@ -2,10 +2,9 @@ using Unity.Entities;
 using Unity.NetCode;
 using UnityEngine;
 
-/// <summary>
-/// Client-side system that receives resource updates from server
-/// and updates the local ResourceManager
-/// </summary>
+
+// gets resource status from Server and updates the local ResourceManager
+
 [UpdateInGroup(typeof(SimulationSystemGroup))]
 [WorldSystemFilter(WorldSystemFilterFlags.ClientSimulation)]
 public partial struct ClientResourceSyncSystem : ISystem
@@ -15,7 +14,6 @@ public partial struct ClientResourceSyncSystem : ISystem
         var resourceManager = ResourceManager.Instance;
         if (resourceManager == null) return;
 
-        // Create command buffer for structural changes
         var ecb = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
 
         // Process resource sync RPCs from server
@@ -24,14 +22,13 @@ public partial struct ClientResourceSyncSystem : ISystem
             .WithAll<ReceiveRpcCommandRequest>()
             .WithEntityAccess())
         {
-            // Update local ResourceManager with server values
             int currentR1 = resourceManager.GetResourceAmount(ResourceManager.ResourceType.Resource1);
             int currentR2 = resourceManager.GetResourceAmount(ResourceManager.ResourceType.Resource2);
 
             int newR1 = syncRpc.ValueRO.resource1;
             int newR2 = syncRpc.ValueRO.resource2;
 
-            // Set the resources to match server (server is authoritative)
+            // Set the resources to match server
             if (currentR1 != newR1)
             {
                 int diff = newR1 - currentR1;
@@ -50,9 +47,6 @@ public partial struct ClientResourceSyncSystem : ISystem
                     resourceManager.RemoveResource(ResourceManager.ResourceType.Resource2, -diff);
             }
 
-            Debug.Log($"[Client] Resources synced from server: R1:{newR1}, R2:{newR2}");
-
-            // Queue the RPC entity for destruction
             ecb.DestroyEntity(rpcEntity);
         }
 
@@ -68,11 +62,9 @@ public partial struct ClientResourceSyncSystem : ISystem
 
             Debug.Log($"[Client] Resources refunded: R1:{refund.ValueRO.resource1Amount}, R2:{refund.ValueRO.resource2Amount}");
 
-            // Queue the RPC entity for destruction
             ecb.DestroyEntity(rpcEntity);
         }
 
-        // Execute all queued commands
         ecb.Playback(state.EntityManager);
         ecb.Dispose();
     }

@@ -9,10 +9,10 @@ public class SelectionAuthoring : MonoBehaviour
     {
         public override void Bake(SelectionAuthoring authoring)
         {
-            Entity entity = GetEntity(TransformUsageFlags.Dynamic);
+            Entity entity = GetEntity(TransformUsageFlags.None);
             AddComponent(entity, new Selected
             {
-                selectorEntity = GetEntity(authoring.selectorGameObject, TransformUsageFlags.Dynamic),
+                selectorEntity = GetEntity(authoring.selectorGameObject, TransformUsageFlags.Renderable),
                 showScale = authoring.showScale,
             });
             SetComponentEnabled<Selected>(entity, false);

@@ -11,7 +11,7 @@ GameObject:
   - component: {fileID: 9199027847445842033}
   - component: {fileID: 1283029464680925096}
   - component: {fileID: -5281380014654965767}
-  - component: {fileID: -4946782320313031396}
+  - component: {fileID: 3712837029598996}
   m_Layer: 0
   m_Name: TargetArrow
   m_TagString: Untagged
@@ -59,7 +59,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: c3b95a73f6eb3c14d898a6426cc60ceb, type: 2}
+  - {fileID: 2100000, guid: 81682f5ac1c8c8f42865591fa72e9db7, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -90,7 +90,7 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 657034154890589947}
   m_Mesh: {fileID: 10209, guid: 0000000000000000e000000000000000, type: 0}
---- !u!114 &-4946782320313031396
+--- !u!114 &3712837029598996
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -99,7 +99,6 @@ MonoBehaviour:
   m_GameObject: {fileID: 657034154890589947}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 232cd14e03fbbd84ca62972939a671d5, type: 3}
+  m_Script: {fileID: 11500000, guid: 80124295fc8d6f946990ca7f0a06851b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::TargetArrowPrefabAuthoring
-  showScale: 0.2

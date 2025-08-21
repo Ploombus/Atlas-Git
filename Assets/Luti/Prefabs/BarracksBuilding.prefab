@@ -27,7 +27,7 @@ Transform:
   m_GameObject: {fileID: 6288906594037575408}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalPosition: {x: 0, y: -2.5, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children: []
@@ -104,7 +104,8 @@ GameObject:
   - component: {fileID: 445331104062534353}
   - component: {fileID: 4747877185550617419}
   - component: {fileID: 342186423587915434}
-  m_Layer: 0
+  - component: {fileID: 524587752226615362}
+  m_Layer: 6
   m_Name: BarracksBuilding
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -185,7 +186,7 @@ BoxCollider:
   m_Enabled: 1
   serializedVersion: 3
   m_Size: {x: 5, y: 5, z: 5}
-  m_Center: {x: 0, y: 2.5, z: 0}
+  m_Center: {x: 0, y: 0, z: 0}
 --- !u!114 &445331104062534353
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -202,8 +203,8 @@ MonoBehaviour:
   radius: 10
   spawnRequested: 0
   barracksGameObjectPrefab: {fileID: 7494198932097456828, guid: 94c94d3fa1972b34a91f8a0e5d2cf3b3, type: 3}
-  unitResource1Cost: 10
-  unitResource2Cost: 10
+  unitResource1Cost: 20
+  unitResource2Cost: 0
 --- !u!114 &4747877185550617419
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -231,3 +232,17 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerAuthoring
   color: {r: 1, g: 1, b: 1, a: 1}
+--- !u!114 &524587752226615362
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7919245462973414186}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 08b52594f5610ba498d941387c3cef19, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TargetingSizeAuthoring
+  radius: 4
+  height: 2

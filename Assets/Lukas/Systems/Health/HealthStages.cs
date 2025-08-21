@@ -24,10 +24,3 @@ public static class HealthStageUtil
     public static HealthStage Damage(HealthStage s, int steps = 1) => ApplyDelta(s, -steps);
     public static HealthStage Heal  (HealthStage s, int steps = 1) => ApplyDelta(s,  steps);
 }
-
-public struct HealthState : IComponentData
-{
-    [GhostField] public HealthStage currentStage;
-    [GhostField] public HealthStage previousStage;
-    public int healthChange;
-}

@@ -7,7 +7,7 @@ public class TargetArrowPrefabAuthoring : MonoBehaviour
     {
         public override void Bake(TargetArrowPrefabAuthoring authoring)
         {
-            var entity = GetEntity(TransformUsageFlags.Dynamic);
+            var entity = GetEntity(TransformUsageFlags.Renderable);
             AddComponent(entity, new TargetArrow{});
         }
     }

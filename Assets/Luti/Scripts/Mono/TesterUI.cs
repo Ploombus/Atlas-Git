@@ -28,6 +28,7 @@ public class TesterUI : MonoBehaviour
     private bool buildMode;
     private VisualElement buildingUI;
     private Button spawnUnitButton;
+    private bool isOwnerOfSelectedBuilding = false;
 
     // Cached data from events
     private Entity selectedBuilding = Entity.Null;
@@ -106,22 +107,27 @@ public class TesterUI : MonoBehaviour
     // Event Handlers
     private void HandleBuildingSelected(BuildingSelectedEventData data)
     {
-        Debug.Log($"TesterUI: Received BuildingSelected event for entity {data.BuildingEntity}");
-
+        isOwnerOfSelectedBuilding = true;
         selectedBuilding = data.BuildingEntity;
-        cachedResource1Cost = data.Resource1Cost;
-        cachedResource2Cost = data.Resource2Cost;
-
-        // Show building UI
         buildingUI.style.display = DisplayStyle.Flex;
-        Debug.Log("TesterUI: Building UI should now be visible");
 
         // Update button text with costs
-        UpdateUnitButtonDisplay();
+        if (data.Resource1Cost > 0 || data.Resource2Cost > 0)
+        {
+            string costText = $"Base Unit\nCost: ";
+            if (data.Resource1Cost > 0) costText += $"R1:{data.Resource1Cost} ";
+            if (data.Resource2Cost > 0) costText += $"R2:{data.Resource2Cost}";
+            spawnUnitButton.text = costText;
+        }
+        else
+        {
+            spawnUnitButton.text = "Base Unit";
+        }
     }
 
     private void HandleBuildingDeselected()
     {
+        isOwnerOfSelectedBuilding = false;
         selectedBuilding = Entity.Null;
         buildingUI.style.display = DisplayStyle.None;
     }
@@ -283,19 +289,22 @@ public class TesterUI : MonoBehaviour
 
     private void OnSpawnUnitClicked(ClickEvent evt)
     {
-        if (selectedBuilding == Entity.Null)
+        if (selectedBuilding != Entity.Null)
         {
-            Debug.Log("No building selected to spawn unit from");
-            return;
+            // Check if we own this building first
+            if (!isOwnerOfSelectedBuilding)
+            {
+                Debug.Log("Cannot spawn units from buildings you don't own");
+                return;
+            }
+
+            // Don't do client-side resource validation anymore - let server handle it
+            // Just send the spawn request and server will validate
+
+            // Send spawn request RPC
+            SendSpawnUnitRpc(selectedBuilding);
+
         }
-
-        // Don't do client-side resource validation anymore - let server handle it
-        // Just send the spawn request and server will validate
-
-        // Send spawn request RPC
-        SendSpawnUnitRpc(selectedBuilding);
-
-        Debug.Log($"Spawn request sent for building {selectedBuilding}");
     }
 
     private void SendSpawnUnitRpc(Entity buildingEntity)

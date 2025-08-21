@@ -2,10 +2,7 @@ using Unity.Entities;
 using Unity.NetCode;
 using UnityEngine;
 
-/// <summary>
-/// Client-side system that monitors building selection and raises UI events
-/// Runs in ECS, communicates with UI via events only
-/// </summary>
+
 [UpdateInGroup(typeof(PresentationSystemGroup))]
 [WorldSystemFilter(WorldSystemFilterFlags.ClientSimulation)]
 public partial struct BuildingUISystem : ISystem
@@ -13,19 +10,32 @@ public partial struct BuildingUISystem : ISystem
     private Entity lastSelectedBuilding;
     private int lastResource1;
     private int lastResource2;
+    private bool hasLoggedResourceWarning;
 
     public void OnCreate(ref SystemState state)
     {
         lastSelectedBuilding = Entity.Null;
         lastResource1 = -1;
         lastResource2 = -1;
+        hasLoggedResourceWarning = false;
     }
 
     public void OnUpdate(ref SystemState state)
     {
-        // Get the local player's resources from ResourceManager singleton
+        // Get ResourceManager but don't spam if it's missing
         var resourceManager = ResourceManager.Instance;
-        if (resourceManager == null) return;
+        if (resourceManager == null)
+        {
+            if (!hasLoggedResourceWarning)
+            {
+                Debug.LogWarning("BuildingUISystem: ResourceManager.Instance is null. Will retry silently.");
+                hasLoggedResourceWarning = true;
+            }
+            return;
+        }
+
+        // Reset warning flag if we found the manager
+        hasLoggedResourceWarning = false;
 
         int currentResource1 = resourceManager.GetResourceAmount(ResourceManager.ResourceType.Resource1);
         int currentResource2 = resourceManager.GetResourceAmount(ResourceManager.ResourceType.Resource2);
@@ -43,106 +53,72 @@ public partial struct BuildingUISystem : ISystem
             }
         }
 
-        // Alternative: Check if TesterUI has a selected building (for SelectionManager compatibility)
-        if (TesterUI.Instance != null)
-        {
-            var testerSelectedBuilding = TesterUI.Instance.GetSelectedBuilding();
-            if (testerSelectedBuilding != Entity.Null && testerSelectedBuilding != lastSelectedBuilding)
-            {
-                if (state.EntityManager.Exists(testerSelectedBuilding))
-                {
-                    lastSelectedBuilding = testerSelectedBuilding;
-                    HandleBuildingSelection(ref state, testerSelectedBuilding, currentResource1, currentResource2);
-                }
-            }
-            else if (testerSelectedBuilding == Entity.Null && lastSelectedBuilding != Entity.Null)
-            {
-                // TesterUI deselected
-                lastSelectedBuilding = Entity.Null;
-                BuildingUIEvents.RaiseBuildingDeselected();
-            }
-        }
-        
-        if (TesterUI.Instance != null)
-        {
-            var testerUI = TesterUI.Instance;
-            resourceManager = testerUI.GetComponent<ResourceManager>();
-        }
-
-        if (resourceManager == null)
-        {
-            Debug.LogWarning("BuildingUISystem: ResourceManager not found");
-            return;
-        }
-
-        currentResource1 = resourceManager.GetResourceAmount(ResourceManager.ResourceType.Resource1);
-        currentResource2 = resourceManager.GetResourceAmount(ResourceManager.ResourceType.Resource2);
-
-        // Check for resource changes
-        if (currentResource1 != lastResource1 || currentResource2 != lastResource2)
-        {
-            lastResource1 = currentResource1;
-            lastResource2 = currentResource2;
-
-            // If we have a selected building, update affordability
-            if (lastSelectedBuilding != Entity.Null && state.EntityManager.Exists(lastSelectedBuilding))
-            {
-                UpdateBuildingAffordability(ref state, lastSelectedBuilding, currentResource1, currentResource2);
-            }
-        }
-
         // Monitor for buildings with ENABLED Selected component
-        // WithAll only matches enabled components by default
         Entity currentlySelectedBuilding = Entity.Null;
-        int buildingCount = 0;
-        int selectedCount = 0;
-
-        // First, let's see how many buildings exist
-        foreach (var (building, entity) in
-            SystemAPI.Query<RefRO<Building>>()
-            .WithEntityAccess())
-        {
-            buildingCount++;
-        }
-
-        // Now check for selected buildings
         foreach (var (building, entity) in
             SystemAPI.Query<RefRO<Building>>()
             .WithAll<Selected>()  // Only matches if Selected is enabled
             .WithEntityAccess())
         {
-            selectedCount++;
             currentlySelectedBuilding = entity;
 
             if (entity != lastSelectedBuilding)
             {
-                Debug.Log($"BuildingUISystem: New building selected - Entity {entity}");
                 lastSelectedBuilding = entity;
                 HandleBuildingSelection(ref state, entity, currentResource1, currentResource2);
             }
         }
 
-        // Debug output
-        if (buildingCount > 0)
-        {
-            Debug.Log($"BuildingUISystem: Buildings: {buildingCount}, Selected: {selectedCount}");
-        }
-
         // If we had a selected building but don't anymore, it was deselected
         if (lastSelectedBuilding != Entity.Null && currentlySelectedBuilding == Entity.Null)
         {
-            Debug.Log("BuildingUISystem: Building deselected");
             lastSelectedBuilding = Entity.Null;
             BuildingUIEvents.RaiseBuildingDeselected();
         }
-
-        // Process spawn validation responses from server
-        ProcessSpawnValidationResponses(ref state);
     }
 
     private void HandleBuildingSelection(ref SystemState state, Entity buildingEntity,
         int currentResource1, int currentResource2)
     {
+        // Get building owner
+        int buildingOwnerNetworkId = -1;
+        if (state.EntityManager.HasComponent<GhostOwner>(buildingEntity))
+        {
+            var owner = state.EntityManager.GetComponentData<GhostOwner>(buildingEntity);
+            buildingOwnerNetworkId = owner.NetworkId;
+        }
+
+        int localPlayerNetworkId = -1;
+
+        foreach (var (netId, entity) in
+            SystemAPI.Query<RefRO<GhostOwner>>()
+            .WithAll<GhostOwnerIsLocal>()
+            .WithEntityAccess())
+        {
+            localPlayerNetworkId = netId.ValueRO.NetworkId;
+            break;
+        }
+
+        if (localPlayerNetworkId == -1)
+        {
+            foreach (var (netId, entity) in
+                SystemAPI.Query<RefRO<NetworkId>>()
+                .WithAll<NetworkStreamConnection>()
+                .WithEntityAccess())
+            {
+                localPlayerNetworkId = netId.ValueRO.Value;
+                break;
+            }
+        }
+
+
+        // Only show UI if the local player owns the building
+        if (buildingOwnerNetworkId != localPlayerNetworkId)
+        {
+            return;
+        }
+
+        // Owner - proceed with showing UI
         var eventData = new BuildingSelectedEventData
         {
             BuildingEntity = buildingEntity,
@@ -193,28 +169,5 @@ public partial struct BuildingUISystem : ISystem
         };
 
         BuildingUIEvents.RaiseResourcesUpdated(resourceData);
-    }
-
-    private void ProcessSpawnValidationResponses(ref SystemState state)
-    {
-        // Check for resource refund RPCs from server
-        foreach (var (refund, entity) in
-            SystemAPI.Query<RefRO<ResourceRefundRpc>>()
-            .WithAll<ReceiveRpcCommandRequest>()
-            .WithEntityAccess())
-        {
-            var validationData = new SpawnValidationData
-            {
-                Success = false,
-                RefundResource1 = refund.ValueRO.resource1Amount,
-                RefundResource2 = refund.ValueRO.resource2Amount,
-                Message = "Insufficient resources on server"
-            };
-
-            BuildingUIEvents.RaiseSpawnValidated(validationData);
-
-            // Destroy the RPC entity
-            state.EntityManager.DestroyEntity(entity);
-        }
     }
 }

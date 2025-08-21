@@ -5,82 +5,81 @@ using Unity.Mathematics;
 
 public class UnitCombatAuthoring : MonoBehaviour
 {
-    [Header("Detection / Range")]
-    public float detectRadius = 6f;
-    public float attackRange  = 2f;
-
-    [Header("Attack Stats")]
-    public float hitchance = 0.75f;
+    [Header("Combat Stats")]
+    [Range(0f, 1f)] public float hitchance = 0.33f;
+    public float attackRange = 1.5f;
+    public float attackConeDeg = 30f;
     public float attacksPerSecond = 1.0f;
+    [Range(0f, 1f)] public float attackSlowdown = 0.7f;
 
-    [Header("Attack Timing")]
-    public float hitDelaySeconds = 0.33f;
+    [Header("Animation Timing")]
+    public float attackDuration = 1.0f;  // total attack window
+    public float impactDelay    = 0.55f; // time to impact within the window
+
+    [Header("Combat Options")]
+    public CombatStance stance = CombatStance.StandGround;
 
     public class Baker : Baker<UnitCombatAuthoring>
     {
-        public override void Bake(UnitCombatAuthoring authoring)
+        public override void Bake(UnitCombatAuthoring a)
         {
             var e = GetEntity(TransformUsageFlags.Dynamic);
 
-            AddComponent(e, new ProximitySensor
+            AddComponent(e, new Attacker
             {
-                detectRadius = math.max(authoring.detectRadius, authoring.attackRange),
-                attackRange  = authoring.attackRange
+                stance                = a.stance,
+                cooldownLeft          = 0f,
+                impactDelayTimeLeft   = 0f,
+                attackDurationTimeLeft= 0f,
+                swingStartSequence    = 0,
             });
-            AddComponent(e, new AttackStats
+            AddComponent(e, new CombatStats
             {
-                hitchance         = math.saturate(authoring.hitchance),
-                attacksPerSecond  = math.max(0.01f, authoring.attacksPerSecond),
-                hitDelaySeconds   = math.max(0.6f, authoring.hitDelaySeconds)
-            });
-            AddComponent(e, new AttackTarget { value = Entity.Null });
-            AddComponent(e, new AttackCooldown { timeLeft = 0f });
-            AddComponent(e, new AttackAnimationState { attackTick = 0 });
-            AddComponent(e, new AutoChaseState { isChasing = false });
+                hitchance       = math.saturate(a.hitchance),
+                attackRange     = a.attackRange,
+                attacksPerSecond= math.max(0.01f, a.attacksPerSecond),
+                attackConeDeg   = a.attackConeDeg,
 
-            // wind-up state (server uses this to delay the hit)
-            AddComponent(e, new AttackWindup
-            {
-                timeLeftSeconds = 0f,
-                targetSnapshot  = Entity.Null
+                attackSlowdown  = math.saturate(a.attackSlowdown),
+                attackDuration  = math.max(0.01f, a.attackDuration),
+                impactDelay     = math.clamp(a.impactDelay, 0f, math.max(0.01f, a.attackDuration))
             });
+            AddComponent(e, new AttackAnimationState { attackTick = 0 });
         }
     }
 }
 
-public struct ProximitySensor : IComponentData
+public struct Attacker : IComponentData
 {
-    public float detectRadius;
-    public float attackRange;
+    [GhostField] public CombatStance stance; // replicated for clients UI
+    public Entity attackTargetEntity;
+    public float3 attackDirection;
+    public float cooldownLeft;
+    public bool isChasing;
+    public int sequenceAtChaseStart;
+    public float impactDelayTimeLeft; // seconds left to impact
+    public float attackDurationTimeLeft; // seconds of attack anim left
+    public int swingStartSequence; // lastAppliedSequence captured at swing start
 }
-
-public struct AttackStats : IComponentData
+public enum CombatStance : byte
 {
-    public float hitchance;       
-    public float attacksPerSecond;
-    public float hitDelaySeconds;
+    Aggressive = 0,   // always chase
+    Defensive = 1,   // chase with budget/leash
+    StandGround = 2,   // never chase
+    Hold = 3         //never do nothing unless said so
 }
-
-public struct AttackWindup : IComponentData
+public struct CombatStats : IComponentData
 {
-    public float timeLeftSeconds;  // > 0 while waiting to apply the hit
-    public Entity targetSnapshot;  // who we planned to hit when swing began
-}
-
-public struct AttackTarget : IComponentData
-{
-    public Entity value; // Entity.Null = no target
-}
-
-public struct AttackCooldown : IComponentData
-{
-    public float timeLeft;
+    [GhostField] public float hitchance;
+    [GhostField] public float attackRange;
+    [GhostField] public float attackConeDeg;
+    [GhostField] public float attacksPerSecond;
+    [GhostField] public float attackSlowdown;
+    [GhostField] public float attackDuration;
+    [GhostField] public float impactDelay; // time from swing start to impact
 }
 public struct AttackAnimationState : IComponentData
 {
     [GhostField] public uint attackTick; // increments every swing (hit or miss)
-}
-public struct AutoChaseState : IComponentData
-{
-    public bool isChasing; // true only when AI initiated a chase
+    [GhostField] public uint attackCancelTick; //increments when a swing is canceled pre-impact
 }

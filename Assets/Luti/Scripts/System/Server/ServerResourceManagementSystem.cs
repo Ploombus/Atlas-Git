@@ -37,18 +37,6 @@ public partial struct ServerResourceManagementSystem : ISystem
 
         }
 
-        /* Sync resource changes to clients periodically
-        foreach (var (resources, netId, entity) in
-            SystemAPI.Query<RefRO<PlayerResources>, RefRO<NetworkId>>()
-            .WithAll<NetworkStreamConnection>()
-            .WithEntityAccess())
-        {
-            // Send resource sync RPC to the client (implement if needed)
-            // This can be done periodically or when resources change
-        }
-
-        buffer.Playback(state.EntityManager);
-        buffer.Dispose();*/
     }
 }
 

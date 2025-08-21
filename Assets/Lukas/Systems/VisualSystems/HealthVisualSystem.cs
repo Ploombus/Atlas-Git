@@ -2,6 +2,7 @@ using Unity.Entities;
 using UnityEngine;
 using Managers;
 using Unity.NetCode;
+using UnityEngine.Rendering; // added for ShadowCastingMode
 
 [UpdateInGroup(typeof(PresentationSystemGroup))]
 [UpdateAfter(typeof(UnitAnimateSystem))]
@@ -44,6 +45,13 @@ partial struct HealthVisualSystem : ISystem
             fill.transform.localScale = new Vector3(0.2f, 0.2f, 0.2f);
             var fillRenderer = fill.GetComponent<MeshRenderer>();
             fillRenderer.material.color = Color.green;
+
+            // >>> Only change: disable shadows on both quads
+            bgRenderer.shadowCastingMode = ShadowCastingMode.Off;
+            bgRenderer.receiveShadows = false;
+            fillRenderer.shadowCastingMode = ShadowCastingMode.Off;
+            fillRenderer.receiveShadows = false;
+            // <<<
 
             // start hidden (we'll decide below)
             bgRenderer.enabled = false;

@@ -45,7 +45,7 @@ public partial struct UnitFromBuildingSpawnSystem : ISystem
             var requesterNetId = SystemAPI.GetComponent<NetworkId>(connection).Value;
             var buildingEntity = rpc.ValueRO.buildingEntity;
 
-            // Check if the building exists and get its information
+            // Check if the building exists
             if (SystemAPI.Exists(buildingEntity))
             {
                 // Get building position to spawn unit nearby
@@ -65,6 +65,26 @@ public partial struct UnitFromBuildingSpawnSystem : ISystem
                     Debug.LogWarning($"Player {requesterNetId} tried to spawn unit from building owned by {buildingOwnerId}");
                     buffer.DestroyEntity(rpcEntity);
                     continue;
+                }
+
+                // CHECK AND DEDUCT RESOURCES
+                if (SystemAPI.HasComponent<UnitSpawnCost>(buildingEntity))
+                {
+                    var spawnCost = SystemAPI.GetComponent<UnitSpawnCost>(buildingEntity);
+
+                    // Only check if there's actually a cost
+                    if (spawnCost.unitResource1Cost > 0 || spawnCost.unitResource2Cost > 0)
+                    {
+                        // Try to spend resources using the helper method
+                        if (!ServerPlayerResourceSystem.TrySpendResources(ref state, buffer,
+                            connection, spawnCost.unitResource1Cost, spawnCost.unitResource2Cost))
+                        {
+                            Debug.Log($"Player {requesterNetId} cannot afford unit. Cost: R1:{spawnCost.unitResource1Cost}/R2:{spawnCost.unitResource2Cost}");
+                            buffer.DestroyEntity(rpcEntity);
+                            continue;
+                        }
+
+                    }
                 }
 
                 // Initialize or update building spawn queue
@@ -211,10 +231,9 @@ public partial struct UnitFromBuildingSpawnSystem : ISystem
         buffer.SetComponent(unitEntity, new Player { PlayerColor = rgba });
 
         // Set initial unit mover state
-        buffer.SetComponent(unitEntity, new UnitMover
+        buffer.SetComponent(unitEntity, new UnitTargets
         {
-            targetPosition = spawnData.spawnPosition,
-            activeTarget = false
+            destinationPosition = spawnData.spawnPosition,
         });
     }
 

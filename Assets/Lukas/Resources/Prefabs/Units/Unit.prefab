@@ -11,7 +11,7 @@ GameObject:
   - component: {fileID: 6475708488404353234}
   - component: {fileID: 6577413329698411970}
   - component: {fileID: 8453929555741655575}
-  m_Layer: 6
+  m_Layer: 0
   m_Name: Selector
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -28,7 +28,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 0.1, y: 0.1, z: 0.1}
+  m_LocalScale: {x: 0, y: 0, z: 0}
   m_ConstrainProportionsScale: 1
   m_Children: []
   m_Father: {fileID: 1993517577862454306}
@@ -103,8 +103,9 @@ GameObject:
   - component: {fileID: 2828302935095590142}
   - component: {fileID: 982902502282222320}
   - component: {fileID: 447802268243658217}
-  - component: {fileID: -4639729216667787260}
   - component: {fileID: 164458981789568015}
+  - component: {fileID: 8688028372562505385}
+  - component: {fileID: -4639729216667787260}
   - component: {fileID: 7775162417468945233}
   m_Layer: 6
   m_Name: Unit
@@ -186,7 +187,7 @@ CapsuleCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 2
-  m_Radius: 0.2
+  m_Radius: 0.3
   m_Height: 2
   m_Direction: 1
   m_Center: {x: 0, y: 1, z: 0}
@@ -198,9 +199,9 @@ Rigidbody:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2945860430356742780}
   serializedVersion: 5
-  m_Mass: 7
-  m_LinearDamping: 4
-  m_AngularDamping: 4
+  m_Mass: 10
+  m_LinearDamping: 5
+  m_AngularDamping: 3
   m_CenterOfMass: {x: 0, y: 0, z: 0}
   m_InertiaTensor: {x: 1, y: 1, z: 1}
   m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}
@@ -230,21 +231,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerAuthoring
   color: {r: 1, g: 1, b: 1, a: 1}
---- !u!114 &-4639729216667787260
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2945860430356742780}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 4da1a775236be0940bd776f845ae6e90, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  UnitGameObjectPrefab: {fileID: 1782702501690864755, guid: 60770bdb4dc667c45bea53db0339dc05, type: 3}
-  moveSpeed: 5
-  rotationSpeed: 5
 --- !u!114 &164458981789568015
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -259,6 +245,36 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   selectorGameObject: {fileID: 2506389872397688974}
   showScale: 0.1
+--- !u!114 &8688028372562505385
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2945860430356742780}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 08b52594f5610ba498d941387c3cef19, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TargetingSizeAuthoring
+  radius: 0.3
+  height: 2
+--- !u!114 &-4639729216667787260
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2945860430356742780}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4da1a775236be0940bd776f845ae6e90, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  UnitGameObjectPrefab: {fileID: 1782702501690864755, guid: 60770bdb4dc667c45bea53db0339dc05, type: 3}
+  moveSpeed: 5
+  detectionRadius: 10
+  weight: 70
 --- !u!114 &7775162417468945233
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -271,7 +287,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1c4401133300fa54e97011dd1e172368, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::UnitCombatAuthoring
-  detectRadius: 6
+  hitchance: 0.33
   attackRange: 2
-  hitchance: 0.75
+  attackConeDeg: 20
   attacksPerSecond: 1
+  attackSlowdown: 0.7
+  attackDuration: 1
+  impactDelay: 0.55
+  stance: 0

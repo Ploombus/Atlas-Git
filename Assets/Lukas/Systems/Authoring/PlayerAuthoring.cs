@@ -11,7 +11,7 @@ public class PlayerAuthoring : MonoBehaviour
     {
         public override void Bake(PlayerAuthoring authoring)
         {
-            var entity = GetEntity(TransformUsageFlags.Dynamic);
+            var entity = GetEntity(TransformUsageFlags.None);
             AddComponent(entity, new Player
             {
                 PlayerColor = new float4(authoring.color.r, authoring.color.g, authoring.color.b, authoring.color.a)

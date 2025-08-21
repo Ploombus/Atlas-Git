@@ -1,4 +1,3 @@
-using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -7,336 +6,416 @@ using Unity.Transforms;
 
 [WorldSystemFilter(WorldSystemFilterFlags.ServerSimulation)]
 [UpdateInGroup(typeof(SimulationSystemGroup))]
+[UpdateAfter(typeof(ApplyMoveRequestsServerSystem))]
 public partial struct CombatServerSystem : ISystem
 {
-    private Random _rng;
-
-    // [BurstCompile]
     public void OnCreate(ref SystemState state)
     {
         state.RequireForUpdate<NetworkStreamInGame>();
-        _rng = Random.CreateFromIndex(0xD00DFEEDu);
     }
 
-    // [BurstCompile]
     public void OnUpdate(ref SystemState state)
     {
-        float deltaTimeSeconds = SystemAPI.Time.DeltaTime;
+        float dt = SystemAPI.Time.DeltaTime;
+        var em = state.EntityManager;
 
-        // Collect candidates once
-        var targetEntitiesList   = new NativeList<Entity>(Allocator.Temp);
-        var targetPositionsList  = new NativeList<float3>(Allocator.Temp);
-        var targetOwnerIdsList   = new NativeList<int>(Allocator.Temp);
-        var targetAliveFlagsList = new NativeList<bool>(Allocator.Temp);
-
-        foreach (var (localTransformRO, entity) in SystemAPI
-                     .Query<RefRO<LocalTransform>>()
+        foreach (var (attackerLT, attackerRW, statsRO, unitTargetsRW, attackerEntity)
+                 in SystemAPI.Query<
+                        RefRO<LocalTransform>,
+                        RefRW<Attacker>,
+                        RefRO<CombatStats>,
+                        RefRW<UnitTargets>>()
                      .WithAll<Unit>()
                      .WithEntityAccess())
         {
-            int ownerNetworkId = SystemAPI.HasComponent<GhostOwner>(entity)
-                ? SystemAPI.GetComponent<GhostOwner>(entity).NetworkId
-                : -1;
-
-            bool isAlive = true;
-            if (SystemAPI.HasComponent<HealthState>(entity))
+            // 1) Skip dead attackers
+            if (SystemAPI.HasComponent<HealthState>(attackerEntity))
             {
-                var health = SystemAPI.GetComponent<HealthState>(entity);
+                var h = SystemAPI.GetComponent<HealthState>(attackerEntity);
+                if (h.currentStage == HealthStage.Dead) continue;
+            }
+
+            // 2) Cooldown tick
+            attackerRW.ValueRW.cooldownLeft = math.max(0f, attackerRW.ValueRO.cooldownLeft - dt);
+
+            // 3) Read the current explicit target (no perception here)
+            Entity target = unitTargetsRW.ValueRO.targetEntity;
+            if (target == Entity.Null || !em.Exists(target)) continue;
+
+            // Must be a Unit (you can relax this later if you want buildings, etc.)
+            if (!SystemAPI.HasComponent<Unit>(target)) continue;
+
+            // 4) Skip dead targets
+            if (SystemAPI.HasComponent<HealthState>(target))
+            {
+                var th = SystemAPI.GetComponent<HealthState>(target);
+                if (th.currentStage == HealthStage.Dead) continue;
+            }
+
+            // 5) "Not my owned" check
+            bool isEnemy = true;
+            if (SystemAPI.HasComponent<GhostOwner>(attackerEntity) &&
+                SystemAPI.HasComponent<GhostOwner>(target))
+            {
+                int myId     = SystemAPI.GetComponent<GhostOwner>(attackerEntity).NetworkId;
+                int targetId = SystemAPI.GetComponent<GhostOwner>(target).NetworkId;
+                isEnemy = (myId != targetId);
+            }
+            // else: if target has no GhostOwner, treat as enemy (neutral/AI)
+
+            if (!isEnemy) continue;
+
+            // 6) In-range check (planar)
+            float3 aPos = attackerLT.ValueRO.Position;
+            float3 tPos = SystemAPI.GetComponent<LocalTransform>(target).Position;
+
+            float3 diff = tPos - aPos; diff.y = 0f;
+            float distSq = math.lengthsq(diff);
+            float range  = math.max(0f, statsRO.ValueRO.attackRange);
+            float rangeSq = range * range;
+
+            if (distSq > rangeSq) continue;
+
+            // 7) Swing if off cooldown
+            if (attackerRW.ValueRO.cooldownLeft <= 0f)
+            {
+                // Apply 1 damage (same style as your legacy code)
+                if (SystemAPI.HasComponent<HealthState>(target))
+                {
+                    var th = SystemAPI.GetComponent<HealthState>(target);
+                    if (th.currentStage != HealthStage.Dead)
+                    {
+                        th.healthChange -= 1;
+                        SystemAPI.SetComponent(target, th);
+                    }
+                }
+
+                // Notify animation (optional but nice)
+                if (SystemAPI.HasComponent<AttackAnimationState>(attackerEntity))
+                {
+                    var anim = SystemAPI.GetComponent<AttackAnimationState>(attackerEntity);
+                    anim.attackTick++;
+                    SystemAPI.SetComponent(attackerEntity, anim);
+                }
+
+                // Reset cooldown (simple APS; no windup/recovery here)
+                float gap = 1f / math.max(0.01f, statsRO.ValueRO.attacksPerSecond);
+                attackerRW.ValueRW.cooldownLeft = gap;
+            }
+        }
+    }
+}
+
+
+/*
+using Unity.Collections;
+using Unity.Entities;
+using Unity.Mathematics;
+using Unity.NetCode;
+using Unity.Transforms;
+
+[WorldSystemFilter(WorldSystemFilterFlags.ServerSimulation)]
+[UpdateInGroup(typeof(SimulationSystemGroup))]
+[UpdateAfter(typeof(ApplyMoveRequestsServerSystem))]
+public partial struct CombatServerSystem : ISystem
+{
+    private Random _randomState;
+
+    public void OnCreate(ref SystemState state)
+    {
+        state.RequireForUpdate<NetworkStreamInGame>();
+        _randomState = Random.CreateFromIndex(0xC0FFEEu);
+    }
+
+    public void OnUpdate(ref SystemState state)
+    {
+        float deltaTime = SystemAPI.Time.DeltaTime;
+        var entityManager = state.EntityManager;
+
+        // --------------------------------------------------------------------
+        // Cache units once per frame: entity, position, owner, alive
+        // --------------------------------------------------------------------
+        var cachedEntities  = new NativeList<Entity>(Allocator.Temp);
+        var cachedPositions = new NativeList<float3>(Allocator.Temp);
+        var cachedOwners    = new NativeList<int>(Allocator.Temp);
+        var cachedAlive     = new NativeList<bool>(Allocator.Temp);
+
+        foreach (var (transform, unitEntity) in
+                 SystemAPI.Query<RefRO<LocalTransform>>().WithAll<Unit>().WithEntityAccess())
+        {
+            int ownerId = SystemAPI.GetComponent<GhostOwner>(unitEntity).NetworkId;
+            bool isAlive = true;
+            if (SystemAPI.HasComponent<HealthState>(unitEntity))
+            {
+                var health = SystemAPI.GetComponent<HealthState>(unitEntity);
                 isAlive = health.currentStage != HealthStage.Dead;
             }
 
-            targetEntitiesList.Add(entity);
-            targetPositionsList.Add(localTransformRO.ValueRO.Position);
-            targetOwnerIdsList.Add(ownerNetworkId);
-            targetAliveFlagsList.Add(isAlive);
+            cachedEntities.Add(unitEntity);
+            cachedPositions.Add(transform.ValueRO.Position);
+            cachedOwners.Add(ownerId);
+            cachedAlive.Add(isAlive);
         }
+        
+        const float CancelPenaltySeconds = 1f;
+        const float RotationCancelSuppressSeconds = 2f;
 
-        foreach (var (localTransformRO, proximityRO, attackStatsRO, cooldownRW, windupRW, attackerEntity) in SystemAPI
-                     .Query<RefRO<LocalTransform>, RefRO<ProximitySensor>, RefRO<AttackStats>, RefRW<AttackCooldown>, RefRW<AttackWindup>>()
-                     .WithAll<Unit>()
-                     .WithEntityAccess())
+        // -------------------
+        // Per-attacker loop: 
+        // -------------------
+        foreach (var (attackerTransform,
+                      unitStats,
+                      combatStats,
+                      attacker,
+                      unitTargets,
+                      attackerEntity)
+                 in SystemAPI.Query<RefRO<LocalTransform>, RefRO<UnitStats>, RefRO<CombatStats>, RefRW<Attacker>, RefRW<UnitTargets>>()
+                             .WithAll<Unit>()
+                             .WithEntityAccess())
         {
             // Skip dead attackers
             if (SystemAPI.HasComponent<HealthState>(attackerEntity))
             {
-                var attackerHealth = SystemAPI.GetComponent<HealthState>(attackerEntity);
-                if (attackerHealth.currentStage == HealthStage.Dead)
-                    continue;
+                var healthState = SystemAPI.GetComponent<HealthState>(attackerEntity);
+                if (healthState.currentStage == HealthStage.Dead) continue;
             }
 
-            int attackerOwnerId = SystemAPI.HasComponent<GhostOwner>(attackerEntity)
-                ? SystemAPI.GetComponent<GhostOwner>(attackerEntity).NetworkId
-                : -1;
-
-            float3 attackerPosition = localTransformRO.ValueRO.Position;
-            float detectionRadius   = proximityRO.ValueRO.detectRadius;
-            float attackRange       = proximityRO.ValueRO.attackRange;
+            //Variables:
+            int attackerOwnerNetworkId = SystemAPI.GetComponent<GhostOwner>(attackerEntity).NetworkId;
+            float3 attackerPosition = attackerTransform.ValueRO.Position;
+            float attackRange = combatStats.ValueRO.attackRange;
+            float detectionRadius = unitStats.ValueRO.detectionRadius;
             float detectionRadiusSq = detectionRadius * detectionRadius;
-            float attackRangeSq     = attackRange * attackRange;
 
-            // Current target (will be updated/acquired below)
-            var attackTarget = SystemAPI.GetComponent<AttackTarget>(attackerEntity);
-            Entity currentTargetEntity = attackTarget.value;
+            // ----------------------------
+            // Timers: cooldown & pending impact
+            // ----------------------------
+            float newCooldown = math.max(0f, attacker.ValueRO.cooldownLeft - deltaTime);
+            attacker.ValueRW.cooldownLeft = newCooldown;
+            bool impactWasPending = attacker.ValueRO.pendingImpactTime > 0f;
+            float newPending = math.max(0f, attacker.ValueRO.pendingImpactTime - deltaTime);
+            attacker.ValueRW.pendingImpactTime = newPending;
+            attacker.ValueRW.rotationSuppressSeconds = math.max(0f, attacker.ValueRO.rotationSuppressSeconds - deltaTime);
 
-            // Validate target within detection; acquire if needed
-            bool targetIsValidWithinDetection = false;
-            if (currentTargetEntity != Entity.Null && SystemAPI.Exists(currentTargetEntity))
+            
+
+            // CANCEL ONLY if we are still in wind-up
+            if (newPending > 0f && unitTargets.ValueRO.lastAppliedSequence != attacker.ValueRO.swingStartSequence)
             {
-                int currentIndex = FindIndexOfEntity(targetEntitiesList, currentTargetEntity);
-                if (currentIndex >= 0
-                    && targetAliveFlagsList[currentIndex]
-                    && targetOwnerIdsList[currentIndex] != attackerOwnerId)
+                attacker.ValueRW.pendingImpactTime      = 0f;
+                attacker.ValueRW.moveLockLeft           = 0f;
+                attacker.ValueRW.rotationSuppressSeconds = math.max(
+                attacker.ValueRO.rotationSuppressSeconds, RotationCancelSuppressSeconds);
+                
+                if (SystemAPI.HasComponent<Attacker>(attackerEntity))
                 {
-                    float distanceSquared = math.lengthsq(targetPositionsList[currentIndex] - attackerPosition);
-                    if (distanceSquared <= detectionRadiusSq)
-                        targetIsValidWithinDetection = true;
-                }
-            }
-
-            if (!targetIsValidWithinDetection)
-            {
-                Entity bestCandidateEntity = Entity.Null;
-                float bestCandidateDistanceSquared = float.PositiveInfinity;
-
-                for (int i = 0; i < targetEntitiesList.Length; i++)
-                {
-                    if (!targetAliveFlagsList[i]) continue;
-                    if (targetEntitiesList[i] == attackerEntity) continue;
-                    if (targetOwnerIdsList[i] == attackerOwnerId) continue;
-
-                    float distanceSquared = math.lengthsq(targetPositionsList[i] - attackerPosition);
-                    if (distanceSquared <= detectionRadiusSq && distanceSquared < bestCandidateDistanceSquared)
-                    {
-                        bestCandidateDistanceSquared = distanceSquared;
-                        bestCandidateEntity = targetEntitiesList[i];
-                    }
+                    var att = SystemAPI.GetComponentRW<Attacker>(attackerEntity);
+                    att.ValueRW.rotationSuppressSeconds =
+                        math.max(att.ValueRO.rotationSuppressSeconds, RotationCancelSuppressSeconds);
                 }
 
-                attackTarget.value = bestCandidateEntity;
-                SystemAPI.SetComponent(attackerEntity, attackTarget);
-                currentTargetEntity = bestCandidateEntity;
-            }
-
-            // No target → tick cooldown and wind-up (if any) and continue
-            if (currentTargetEntity == Entity.Null)
-            {
-                cooldownRW.ValueRW.timeLeft = math.max(0f, cooldownRW.ValueRO.timeLeft - deltaTimeSeconds);
-
-                if (windupRW.ValueRO.timeLeftSeconds > 0f)
+                if (SystemAPI.HasComponent<AttackAnimationState>(attackerEntity))
                 {
-                    var w = windupRW.ValueRO;
-                    w.timeLeftSeconds -= deltaTimeSeconds;
-                    if (w.timeLeftSeconds <= 0f) { w.timeLeftSeconds = 0f; w.targetSnapshot = Entity.Null; }
-                    windupRW.ValueRW = w;
+                    var anim = SystemAPI.GetComponent<AttackAnimationState>(attackerEntity);
+                    anim.attackCancelTick++;
+                    SystemAPI.SetComponent(attackerEntity, anim);
                 }
 
-                // ⬇️ add this: stop AI-chase if we had been chasing
-                if (SystemAPI.HasComponent<AutoChaseState>(attackerEntity))
-                {
-                    var ac = SystemAPI.GetComponent<AutoChaseState>(attackerEntity);
-                    if (ac.isChasing)
-                    {
-                        ac.isChasing = false;
-                        SystemAPI.SetComponent(attackerEntity, ac);
-                    }
-                }
-
+                attacker.ValueRW.cooldownLeft = math.max(newCooldown, CancelPenaltySeconds);
                 continue;
             }
 
-            // Distance + hysteresis
-            int targetIndex = FindIndexOfEntity(targetEntitiesList, currentTargetEntity);
-            if (targetIndex < 0
-                || !targetAliveFlagsList[targetIndex]
-                || targetOwnerIdsList[targetIndex] == attackerOwnerId)
-            {
-                // lost or invalid → clear
-                SystemAPI.SetComponent(attackerEntity, new AttackTarget { value = Entity.Null });
+            // Find nearest alive enemy in detection range, and decide if it is within attack range
+            float attackRangeTolerance = 0.2f; //Set tolerance
 
-                // ⬇️ add this: stop AI-chase since our target is gone
-                if (SystemAPI.HasComponent<AutoChaseState>(attackerEntity))
+            float effectiveAttackRange = math.max(0f, attackRange - attackRangeTolerance);
+            float effectiveAttackRangeSq = effectiveAttackRange * effectiveAttackRange;
+            int nearestEnemyIndex = -1;
+            float nearestDistSq = float.MaxValue;
+
+            for (int i = 0; i < cachedEntities.Length; i++)
+            {
+                if (!cachedAlive[i]) continue;                           // skip dead
+                if (cachedOwners[i] == attackerOwnerNetworkId) continue; // skip own team
+
+                float3 diff = cachedPositions[i] - attackerPosition;
+                float distSq = math.lengthsq(diff);
+
+                if (distSq < nearestDistSq && distSq <= detectionRadiusSq)
                 {
-                    var ac = SystemAPI.GetComponent<AutoChaseState>(attackerEntity);
-                    if (ac.isChasing)
+                    nearestDistSq = distSq;
+                    nearestEnemyIndex = i;
+                }
+            }
+
+            float3 toNearestEnemy = float3.zero;
+            bool targetInAttackRange = false;
+            float distanceToNearestEnemy = 0f;
+
+            //Set the variables
+            if (nearestEnemyIndex != -1)
+            {
+                toNearestEnemy = cachedPositions[nearestEnemyIndex] - attackerPosition;
+                targetInAttackRange = nearestDistSq <= effectiveAttackRangeSq;
+                distanceToNearestEnemy = math.sqrt(nearestDistSq);
+            }
+
+            //Rotate to nearest enemy in range
+            if (nearestEnemyIndex != -1)
+            {
+                float3 enemyPos = cachedPositions[nearestEnemyIndex];
+                float3 toEnemy = enemyPos - attackerPosition;
+                float yaw = math.atan2(toEnemy.x, toEnemy.z);
+
+                unitTargets.ValueRW.targetPosition = enemyPos;   // valid this frame
+                unitTargets.ValueRW.targetRotation = yaw;        // radians to face
+            }
+            else
+            {
+                // Neutralize when no enemy this frame so Movement override stays off
+                unitTargets.ValueRW.targetPosition = attackerPosition;
+                unitTargets.ValueRW.targetRotation = float.NaN;
+            }
+
+
+            float3 facing = math.forward(attackerTransform.ValueRO.Rotation);
+            attacker.ValueRW.attackDirection = math.normalizesafe(facing, new float3(0, 0, 1));
+
+
+            // ----------------------------
+            // Resolve impact if the pending timer just expired
+            // ----------------------------
+            if (impactWasPending && newPending <= 0f)
+            {
+                float coneDeg = math.clamp(combatStats.ValueRO.attackConeDeg, 1f, 179f);
+                float halfAngleRad = math.radians(coneDeg * 0.5f);
+                float cosHalf = math.cos(halfAngleRad);
+                float impactRange = attackRange; // optional forgiveness: +0.25f
+
+                var candidateIndices = new NativeList<int>(Allocator.Temp);
+                var candidateRanges = new NativeList<float>(Allocator.Temp);
+
+                float3 swingFacing = attacker.ValueRO.attackDirection;
+                swingFacing.y = 0f;
+                swingFacing = math.normalizesafe(swingFacing, new float3(0, 0, 1));
+
+                for (int i = 0; i < cachedEntities.Length; i++)
+                {
+                    if (!cachedAlive[i]) continue;
+                    if (cachedOwners[i] == attackerOwnerNetworkId) continue;
+
+                    float3 to = cachedPositions[i] - attackerPosition;
+                    to.y = 0f;
+                    float dist = math.length(to);
+                    if (dist > impactRange) continue;
+
+                    float3 dir = dist > 0f ? to / dist : new float3(0, 0, 0);
+                    float dotF = math.dot(swingFacing, dir);
+                    if (dotF + 1e-4f < cosHalf) continue;
+
+                    candidateIndices.Add(i);
+                    candidateRanges.Add(dist);
+                }
+
+                if (candidateIndices.Length == 0)
+                {
+                    // whiff → cancel VFX/UI, but DO NOT lock
+                    if (SystemAPI.HasComponent<AttackAnimationState>(attackerEntity))
                     {
-                        ac.isChasing = false;
-                        SystemAPI.SetComponent(attackerEntity, ac);
+                        var anim = SystemAPI.GetComponent<AttackAnimationState>(attackerEntity);
+                        anim.attackCancelTick++;
+                        SystemAPI.SetComponent(attackerEntity, anim);
                     }
+
+                    // end swing, no lock
+                    attacker.ValueRW.attackTargetEntity = Entity.Null;
+                    attacker.ValueRW.pendingImpactTime = 0f;
+                    attacker.ValueRW.postHitFreezeFrames  = 0;
                 }
-
-                cooldownRW.ValueRW.timeLeft = math.max(0f, cooldownRW.ValueRO.timeLeft - deltaTimeSeconds);
-
-                // tick/clear wind-up if active
-                if (windupRW.ValueRO.timeLeftSeconds > 0f)
+                else
                 {
-                    var w = windupRW.ValueRO;
-                    w.timeLeftSeconds -= deltaTimeSeconds;
-                    if (w.timeLeftSeconds <= 0f) { w.timeLeftSeconds = 0f; w.targetSnapshot = Entity.Null; }
-                    windupRW.ValueRW = w;
-                }
-                continue;
-            }
-
-            float distanceSquaredToTarget = math.lengthsq(targetPositionsList[targetIndex] - attackerPosition);
-
-            const float chaseHysteresis = 0.25f;
-            float chaseRadius = attackRange + chaseHysteresis;
-            float chaseRadiusSquared = chaseRadius * chaseRadius;
-
-            // Respect manual orders vs AI-chase
-            bool hasUnitMover = SystemAPI.HasComponent<UnitMover>(attackerEntity);
-            bool isCurrentlyAutoChasing = SystemAPI.HasComponent<AutoChaseState>(attackerEntity)
-                ? SystemAPI.GetComponent<AutoChaseState>(attackerEntity).isChasing
-                : false;
-
-            UnitMover mover = default;
-            bool isManualMove = false;
-            if (hasUnitMover)
-            {
-                mover = SystemAPI.GetComponent<UnitMover>(attackerEntity);
-                isManualMove = mover.activeTarget && !isCurrentlyAutoChasing;
-            }
-
-            // ---- tick wind-up timer (and apply delayed hit when it expires) ----
-            if (windupRW.ValueRO.timeLeftSeconds > 0f)
-            {
-                var w = windupRW.ValueRO;
-                w.timeLeftSeconds -= deltaTimeSeconds;
-
-                if (w.timeLeftSeconds <= 0f)
-                {
-                    // Try to apply the hit to the snapshot target if still valid and near enough
-                    Entity plannedTarget = w.targetSnapshot;
-                    int snapIndex = FindIndexOfEntity(targetEntitiesList, plannedTarget);
-                    bool canAttemptHit = snapIndex >= 0
-                                         && targetAliveFlagsList[snapIndex]
-                                         && targetOwnerIdsList[snapIndex] != attackerOwnerId;
-
-                    if (canAttemptHit)
+                    // apply hits nearest-first...
+                    const int MaxConeHits = int.MaxValue;
+                    int hitsApplied = 0;
+                    while (hitsApplied < MaxConeHits && candidateIndices.Length > 0)
                     {
-                        float distSqNow = math.lengthsq(targetPositionsList[snapIndex] - attackerPosition);
-                        bool stillInReasonableRange = distSqNow <= chaseRadiusSquared; // tolerate slight drift
-                        if (stillInReasonableRange && SystemAPI.HasComponent<HealthState>(plannedTarget))
+                        int bestIdxInList = 0;
+                        float bestRange = candidateRanges[0];
+                        for (int k = 1; k < candidateIndices.Length; k++)
+                            if (candidateRanges[k] < bestRange) { bestRange = candidateRanges[k]; bestIdxInList = k; }
+
+                        int victimCacheIndex = candidateIndices[bestIdxInList];
+                        candidateIndices.RemoveAtSwapBack(bestIdxInList);
+                        candidateRanges.RemoveAtSwapBack(bestIdxInList);
+
+                        Entity victim = cachedEntities[victimCacheIndex];
+                        if (!entityManager.Exists(victim) || !SystemAPI.HasComponent<HealthState>(victim))
+                            continue;
+
+                        var rng = _randomState;
+                        bool didHit = rng.NextFloat() <= math.saturate(combatStats.ValueRO.hitchance);
+                        _randomState = rng;
+
+                        if (didHit)
                         {
-                            var localRandom = _rng;
-                            bool didHit = localRandom.NextFloat() <= math.saturate(attackStatsRO.ValueRO.hitchance);
-                            _rng = localRandom;
-
-                            if (didHit)
+                            var health = SystemAPI.GetComponent<HealthState>(victim);
+                            if (health.currentStage != HealthStage.Dead)
                             {
-                                var targetHealth = SystemAPI.GetComponent<HealthState>(plannedTarget);
-                                if (targetHealth.currentStage != HealthStage.Dead)
-                                {
-                                    targetHealth.healthChange -= 1;
-                                    SystemAPI.SetComponent(plannedTarget, targetHealth);
-                                }
+                                health.healthChange -= 1;
+                                SystemAPI.SetComponent(victim, health);
                             }
                         }
+
+                        hitsApplied++;
+                        
                     }
 
-                    // Clear wind-up
-                    w.timeLeftSeconds = 0f;
-                    w.targetSnapshot = Entity.Null;
+                    // real impact → start post-swing lock
+                    attacker.ValueRW.moveLockLeft = math.max(attacker.ValueRO.moveLockLeft,
+                                                             combatStats.ValueRO.postSwingLockSeconds);
+
+                    attacker.ValueRW.postHitFreezeFrames = 0;
+
+                    // clear per-swing
+                    attacker.ValueRW.attackTargetEntity = Entity.Null;
+                    attacker.ValueRW.pendingImpactTime = 0f;
                 }
 
-                windupRW.ValueRW = w;
+                candidateIndices.Dispose();
+                candidateRanges.Dispose();
             }
 
-            // ---- CHASE if outside radius (respect manual move) ----
-            if (distanceSquaredToTarget > chaseRadiusSquared)
+            // ----------------------------
+            // Start a new swing if not pending and within range
+            // ----------------------------
+            if (attacker.ValueRO.pendingImpactTime <= 0f
+                && newCooldown <= 0f
+                && targetInAttackRange)
             {
-                if (hasUnitMover && (!isManualMove || isCurrentlyAutoChasing))
+                // Lock impact timing
+                attacker.ValueRW.pendingImpactTime = combatStats.ValueRO.impactDelaySeconds;
+                // remember which order sequence started this wind-up
+                attacker.ValueRW.swingStartSequence = unitTargets.ValueRO.lastAppliedSequence;
+
+                // Notify clients to play swing animation
+                if (SystemAPI.HasComponent<AttackAnimationState>(attackerEntity))
                 {
-                    const float stopBuffer = 0.50f; // ↑ from 0.35f; stops earlier so they don't pass through
-                    float desiredStopRange = math.max(attackRange - stopBuffer, 0.3f);
-
-                    float3 vectorToTarget     = targetPositionsList[targetIndex] - attackerPosition;
-                    float3 directionToTarget  = math.normalizesafe(vectorToTarget, new float3(0, 0, 1));
-                    float3 desiredChasePoint  = targetPositionsList[targetIndex] - directionToTarget * desiredStopRange;
-
-                    mover.targetPosition = desiredChasePoint;
-                    mover.targetRotation = math.atan2(directionToTarget.x, directionToTarget.z);
-                    mover.activeTarget   = true;
-                    mover.isRunning      = true;
-                    SystemAPI.SetComponent(attackerEntity, mover);
-
-                    if (SystemAPI.HasComponent<AutoChaseState>(attackerEntity))
-                    {
-                        var ac = SystemAPI.GetComponent<AutoChaseState>(attackerEntity);
-                        ac.isChasing = true;
-                        SystemAPI.SetComponent(attackerEntity, ac);
-                    }
+                    var anim = SystemAPI.GetComponent<AttackAnimationState>(attackerEntity);
+                    anim.attackTick++;
+                    SystemAPI.SetComponent(attackerEntity, anim);
                 }
 
-                cooldownRW.ValueRW.timeLeft = math.max(0f, cooldownRW.ValueRO.timeLeft - deltaTimeSeconds);
-                continue;
-            }
-
-            if (hasUnitMover && isCurrentlyAutoChasing)
-            {
-                mover.activeTarget = false; // stop AI movement at range
-                SystemAPI.SetComponent(attackerEntity, mover);
-
-                var ac = SystemAPI.GetComponent<AutoChaseState>(attackerEntity);
-                ac.isChasing = false;
-                SystemAPI.SetComponent(attackerEntity, ac);
-            }
-
-            // Always face the current target while in range (even if move was manual)
-            if (hasUnitMover)
-            {
-                float3 vNow    = targetPositionsList[targetIndex] - attackerPosition;
-                float3 dirNow  = math.normalizesafe(vNow, new float3(0, 0, 1));
-                var moverNow   = SystemAPI.GetComponent<UnitMover>(attackerEntity);
-                moverNow.targetRotation = math.atan2(dirNow.x, dirNow.z);
-                SystemAPI.SetComponent(attackerEntity, moverNow);
-            }
-
-            // Cooldown gate (always tick here)
-            float remainingCooldown = cooldownRW.ValueRO.timeLeft - deltaTimeSeconds;
-            if (remainingCooldown > 0f)
-            {
-                cooldownRW.ValueRW.timeLeft = remainingCooldown;
-                continue;
-            }
-
-            // Don't start a new swing while a previous wind-up is still active
-            if (windupRW.ValueRO.timeLeftSeconds > 0f)
-            {
-                // cooldown already at/near zero; keep it there until we can swing again
-                cooldownRW.ValueRW.timeLeft = 0f;
-                continue;
-            }
-
-            // ---- START a new swing: trigger animation now, delay the hit ----
-            {
-                // Bump the replicated animation tick so clients play Punch immediately
-                var animState = SystemAPI.GetComponent<AttackAnimationState>(attackerEntity);
-                animState.attackTick++;
-                SystemAPI.SetComponent(attackerEntity, animState);
-
-                // Arm the wind-up to apply damage later to the current target
-                var w = windupRW.ValueRO;
-                w.timeLeftSeconds = math.max(0f, attackStatsRO.ValueRO.hitDelaySeconds);
-                w.targetSnapshot  = currentTargetEntity;
-                windupRW.ValueRW  = w;
-
-                // Reset the cooldown from swing start (classic ARPG/RTS timing)
-                float attackPeriodSeconds = math.max(0.01f, 1f / attackStatsRO.ValueRO.attacksPerSecond);
-                cooldownRW.ValueRW.timeLeft = attackPeriodSeconds;
+                // Cooldown until the next available swing (wind-up + recovery both included)
+                float baseGap = 1f / math.max(0.01f, combatStats.ValueRO.attacksPerSecond);
+                attacker.ValueRW.cooldownLeft = baseGap + combatStats.ValueRO.postSwingLockSeconds;
             }
         }
 
-        targetEntitiesList.Dispose();
-        targetPositionsList.Dispose();
-        targetOwnerIdsList.Dispose();
-        targetAliveFlagsList.Dispose();
-    }
-
-    private static int FindIndexOfEntity(NativeList<Entity> list, Entity entity)
-    {
-        for (int i = 0; i < list.Length; i++)
-            if (list[i] == entity) return i;
-        return -1;
+        // Cleanup caches
+        cachedEntities.Dispose();
+        cachedPositions.Dispose();
+        cachedOwners.Dispose();
+        cachedAlive.Dispose();
     }
 }
+*/

@@ -4,7 +4,6 @@ using Unity.NetCode;
 using UnityEngine;
 using Unity.Mathematics;
 using Unity.Transforms;
-using System.Numerics;
 
 
 [WorldSystemFilter(WorldSystemFilterFlags.ServerSimulation)]
@@ -31,7 +30,7 @@ partial struct SpawnServerSystem : ISystem
                              .WithAll<PendingPlayerSpawn>()
                              .WithEntityAccess())
         {
-            float3 basePosition = new float3(UnityEngine.Random.Range(-10, 10), 0, UnityEngine.Random.Range(-10, 10));
+            float3 basePosition = new float3(RandomWithGap(-90, -60, 60, 90), 0f, RandomWithGap(-90, -60, 60, 90));
             float spacing = 1f;
 
             for (int i = 0; i < 5; i++)
@@ -42,10 +41,9 @@ partial struct SpawnServerSystem : ISystem
                 buffer.SetComponent(unitEntity, LocalTransform.FromPosition(unitPosition));
 
                 //Setting without changing speed etc.
-                buffer.SetComponent(unitEntity, new UnitMover
+                buffer.SetComponent(unitEntity, new UnitTargets
                 {
-                    targetPosition = unitPosition,
-                    activeTarget = false
+                    destinationPosition = unitPosition,
                 });
 
                 int ownerId = netId.ValueRO.Value;
@@ -58,7 +56,7 @@ partial struct SpawnServerSystem : ISystem
             float3 barracksPosition = basePosition + new float3(0f, 0f, 5f); // Position barracks 5 units behind the units
             var barracksEntity = buffer.Instantiate(buildingReferences.buildingPrefabEntity);
 
-            buffer.SetComponent(barracksEntity, LocalTransform.FromPosition(barracksPosition));
+            buffer.SetComponent(barracksEntity, LocalTransform.FromPosition(barracksPosition.x, 2.5f, barracksPosition.z));
             buffer.AddComponent(barracksEntity, new GhostOwner { NetworkId = netId.ValueRO.Value });
 
             // Set player color for the barracks (same as units)
@@ -67,6 +65,10 @@ partial struct SpawnServerSystem : ISystem
             buffer.SetComponent(barracksEntity, new Player { PlayerColor = rgba2 });
 
             buffer.AppendToBuffer(entity, new LinkedEntityGroup { Value = barracksEntity });
+
+            var rpcEntity = buffer.CreateEntity();
+            buffer.AddComponent(rpcEntity, new CenterCameraRpc { position = basePosition });
+            buffer.AddComponent(rpcEntity, new SendRpcCommandRequest { TargetConnection = entity }); // 'entity' is the connection here
 
             buffer.RemoveComponent<PendingPlayerSpawn>(entity); // prevent re-spawning
         }
@@ -84,10 +86,9 @@ partial struct SpawnServerSystem : ISystem
             var unitEntity = buffer.Instantiate(unitRef.unitPrefabEntity);
 
             buffer.SetComponent(unitEntity, LocalTransform.FromPosition(position));
-            buffer.SetComponent(unitEntity, new UnitMover
+            buffer.SetComponent(unitEntity, new UnitTargets
             {
-                targetPosition = position,
-                activeTarget = false
+                destinationPosition = position,
             });
 
             if (owner == 1)
@@ -110,4 +111,17 @@ partial struct SpawnServerSystem : ISystem
         buffer.Playback(state.EntityManager);
         buffer.Dispose();
     }
+
+    float RandomWithGap(int negmax, int neggap, int posgap, int posmax)
+    {
+        if (UnityEngine.Random.value < 0.5f)
+            return UnityEngine.Random.Range(negmax, neggap);
+        else
+            return UnityEngine.Random.Range(posgap, posmax);
+    }
+}
+
+public struct CenterCameraRpc : IRpcCommand
+{
+    public float3 position; // where the rig should move (XZ), keep your current Y
 }

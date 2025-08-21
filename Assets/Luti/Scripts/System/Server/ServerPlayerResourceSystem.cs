@@ -2,18 +2,16 @@ using Unity.Entities;
 using Unity.NetCode;
 using UnityEngine;
 
-/// <summary>
 /// Server-side system that manages player resources
 /// Initializes new players, handles resource changes, and syncs with clients
-/// </summary>
 [UpdateInGroup(typeof(SimulationSystemGroup))]
 [WorldSystemFilter(WorldSystemFilterFlags.ServerSimulation)]
 public partial struct ServerPlayerResourceSystem : ISystem
 {
     private float resourceGenerationTimer;
-    private const float RESOURCE_GENERATION_INTERVAL = 5f; // Generate resources every 5 seconds
-    private const int STARTING_RESOURCES = 100; // Starting resources for new players
-    private const int RESOURCE_GENERATION_AMOUNT = 0; // Resources generated per interval
+    private const float RESOURCE_GENERATION_INTERVAL = 5f; 
+    private const int STARTING_RESOURCES = 50; 
+    private const int RESOURCE_GENERATION_AMOUNT = 0; 
 
     public void OnCreate(ref SystemState state)
     {
@@ -54,17 +52,16 @@ public partial struct ServerPlayerResourceSystem : ISystem
             buffer.AddComponent(entity, new PlayerResources
             {
                 resource1 = STARTING_RESOURCES,
-                resource2 = STARTING_RESOURCES
+                resource2 = 0
             });
 
-            Debug.Log($"[Server] Initialized resources for player {netId.ValueRO.Value}: R1:{STARTING_RESOURCES}, R2:{STARTING_RESOURCES}");
 
             // Send initial sync to the client
             var syncRpc = buffer.CreateEntity();
             buffer.AddComponent(syncRpc, new SyncResourcesRpc
             {
                 resource1 = STARTING_RESOURCES,
-                resource2 = STARTING_RESOURCES
+                resource2 = 0
             });
             buffer.AddComponent(syncRpc, new SendRpcCommandRequest { TargetConnection = entity });
         }
@@ -87,7 +84,6 @@ public partial struct ServerPlayerResourceSystem : ISystem
                 buffer.SetComponent(connection, resources);
 
                 var netId = SystemAPI.GetComponent<NetworkId>(connection).Value;
-                Debug.Log($"[Server] Added resources for player {netId}: +R1:{request.ValueRO.resource1ToAdd}, +R2:{request.ValueRO.resource2ToAdd}");
 
                 // Sync new amounts back to client
                 var syncRpc = buffer.CreateEntity();
@@ -120,7 +116,6 @@ public partial struct ServerPlayerResourceSystem : ISystem
                 resources.ValueRW.resource1 += RESOURCE_GENERATION_AMOUNT;
                 resources.ValueRW.resource2 += RESOURCE_GENERATION_AMOUNT;
 
-                Debug.Log($"[Server] Generated resources for player {netId.ValueRO.Value}. New totals: R1:{resources.ValueRO.resource1}, R2:{resources.ValueRO.resource2}");
 
                 // Send sync RPC to client
                 var syncRpc = buffer.CreateEntity();
@@ -140,7 +135,6 @@ public partial struct ServerPlayerResourceSystem : ISystem
         // For now, syncing happens when resources change (in other methods)
     }
 
-    // Helper method to get player resources (for use by other systems)
     public static bool TryGetPlayerResources(ref SystemState state, Entity connectionEntity, out PlayerResources resources)
     {
         if (state.EntityManager.HasComponent<PlayerResources>(connectionEntity))
@@ -153,8 +147,6 @@ public partial struct ServerPlayerResourceSystem : ISystem
         return false;
     }
 
-    // Helper method to spend resources (returns true if successful)
-    // Now accepts an EntityCommandBuffer to avoid conflicts
     public static bool TrySpendResources(ref SystemState state, EntityCommandBuffer ecb,
         Entity connectionEntity, int resource1Cost, int resource2Cost)
     {

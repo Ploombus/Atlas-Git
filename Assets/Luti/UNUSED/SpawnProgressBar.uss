@@ -1,0 +1,105 @@
+/* Main container for the spawn progress bar */
+.progress-container {
+    position: absolute;
+    width: 120px;
+    height: 50px;
+    background-color: rgba(0, 0, 0, 0.8);
+    border-radius: 5px;
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.3);
+    padding: 4px;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* Queue information container */
+.queue-info {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    height: 16px;
+    margin-bottom: 2px;
+}
+
+/* Queue counter styling */
+.queue-counter {
+    font-size: 10px;
+    color: rgb(255, 255, 255);
+    -unity-text-align: middle-left;
+    -unity-font-style: bold;
+    margin: 0;
+    padding: 0;
+}
+
+/* Unit information styling */
+.unit-info {
+    font-size: 8px;
+    color: rgb(200, 200, 200);
+    -unity-text-align: middle-right;
+    margin: 0;
+    padding: 0;
+}
+
+/* Progress bar container */
+.progress-bar-container {
+    width: 100%;
+    height: 20px;
+    flex-direction: row;
+    align-items: center;
+}
+
+/* Progress bar background */
+.progress-background {
+    width: 100%;
+    height: 8px;
+    background-color: rgba(50, 50, 50, 0.9);
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: rgba(100, 100, 100, 0.5);
+    overflow: hidden;
+}
+
+/* Progress bar fill */
+.progress-fill {
+    height: 100%;
+    width: 0%;
+    background-color: rgb(0, 150, 255);
+    border-radius: 3px;
+    transition-property: width, background-color;
+    transition-duration: 0.1s;
+    transition-timing-function: ease-out;
+}
+
+/* Progress fill color variations */
+.progress-fill.starting {
+    background-color: rgb(255, 100, 100);
+}
+
+.progress-fill.in-progress {
+    background-color: rgb(255, 200, 0);
+}
+
+.progress-fill.completing {
+    background-color: rgb(100, 255, 100);
+}
+
+/* Hover effects for better visibility */
+.progress-container:hover {
+    background-color: rgba(0, 0, 0, 0.9);
+    border-color: rgba(255, 255, 255, 0.5);
+}
+
+/* Animation for spawning completion */
+.progress-container.spawning-complete {
+    background-color: rgba(0, 255, 0, 0.3);
+    border-color: rgb(0, 255, 0);
+}
+
+/* Animation for queue waiting */
+.progress-container.waiting {
+    background-color: rgba(255, 255, 0, 0.2);
+    border-color: rgb(255, 255, 0);
+}
+    

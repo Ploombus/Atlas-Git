@@ -1,7 +1,6 @@
 using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
-using Managers;
 using Unity.Transforms;
 
 [WorldSystemFilter(WorldSystemFilterFlags.ClientSimulation)]
@@ -14,35 +13,60 @@ partial struct DotVisualSystem : ISystem
 
     public void OnUpdate(ref SystemState state)
     {
-        float time = (float)SystemAPI.Time.ElapsedTime;
 
-        var unitMoverLookup = SystemAPI.GetComponentLookup<UnitMover>(true);
-        var selectedLookup = SystemAPI.GetComponentLookup<Selected>(true);
+        var unitTargetsLookup = SystemAPI.GetComponentLookup<UnitTargets>(true);
+        var selectedLookup    = SystemAPI.GetComponentLookup<Selected>(true);
+        var attackerLookup    = SystemAPI.GetComponentLookup<Attacker>(true); // exists only on combatants
+        var transformLookup   = SystemAPI.GetComponentLookup<LocalTransform>(true);
 
-        foreach (
-            var (dotTransform, dotData)
-            in SystemAPI.Query<RefRW<LocalTransform>, RefRO<MovementDot>>())
+        const float showDistanceThreshold = 0.5f; // hide dot if essentially at the unit
+
+        foreach (var (dotTransform, dotData) in
+         SystemAPI.Query<RefRW<LocalTransform>, RefRO<MovementDot>>())
         {
             Entity unit = dotData.ValueRO.owner;
 
-            bool isSelected = selectedLookup.HasComponent(unit) &&
-                              selectedLookup.IsComponentEnabled(unit);
-
-            bool isActive = unitMoverLookup.HasComponent(unit) &&
-                            unitMoverLookup[unit].activeTarget;
-
-            // Show or hide
-            if (isSelected && isActive)
+            if (!transformLookup.HasComponent(unit) || !unitTargetsLookup.HasComponent(unit))
             {
-                float scale = 0.15f + math.sin(time * 5f) * 0.05f; // pulsing
-                dotTransform.ValueRW.Scale = scale;
+                dotTransform.ValueRW.Scale = 0f;
+                continue;
+            }
+
+            var unitXform = transformLookup[unit];
+            var unitTargets = unitTargetsLookup[unit];
+
+            // Early cull: not selected, arrived, or destination is essentially at the unit
+            bool isSelected = selectedLookup.HasComponent(unit) && selectedLookup.IsComponentEnabled(unit);
+            float distToDestSq = math.lengthsq(unitTargets.destinationPosition - unitXform.Position);
+
+            if (!isSelected || unitTargets.hasArrived || distToDestSq <= (showDistanceThreshold * showDistanceThreshold))
+            {
+                dotTransform.ValueRW.Scale = 0f;
+                continue;
+            }
+
+            // Decide which position to visualize
+            float3 desiredDotPosition;
+            bool isCombatant = attackerLookup.HasComponent(unit);
+
+            if (isCombatant)
+            {
+                desiredDotPosition = unitTargets.destinationPosition;
             }
             else
             {
-                dotTransform.ValueRW.Scale = 0f; // hide
+                float distDestVsTargetSq = math.lengthsq(unitTargets.targetPosition - unitTargets.destinationPosition);
+                bool aiHasMeaningfulTask = distDestVsTargetSq > (showDistanceThreshold * showDistanceThreshold);
+                desiredDotPosition = aiHasMeaningfulTask ? unitTargets.targetPosition : unitTargets.destinationPosition;
             }
-            
+
+            dotTransform.ValueRW.Position = desiredDotPosition;
+
+            // Pulse (visible because we didn't early-cull)
+            float time = (float)SystemAPI.Time.ElapsedTime;
+            float scale = 0.15f + math.sin(time * 5f) * 0.05f;
+            dotTransform.ValueRW.Scale = scale;
         }
-        
+
     }
 }

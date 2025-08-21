@@ -18,7 +18,7 @@ partial struct SelectorVisualSystem : ISystem
             visualLocalTransform.ValueRW.Scale = 0f;
         }
 
-        foreach (RefRO<Selected> selected in SystemAPI.Query<RefRO<Selected>>().WithAll<GhostOwnerIsLocal>())
+        foreach (RefRO<Selected> selected in SystemAPI.Query<RefRO<Selected>>())
         {
             RefRW<LocalTransform> visualLocalTransform = SystemAPI.GetComponentRW<LocalTransform>(selected.ValueRO.selectorEntity);
             visualLocalTransform.ValueRW.Scale = selected.ValueRO.showScale; 
