@@ -235,6 +235,24 @@ public partial struct UnitFromBuildingSpawnSystem : ISystem
         {
             destinationPosition = spawnData.spawnPosition,
         });
+
+        Entity playerConnection = Entity.Null;
+        foreach (var (netId, connEntity) in
+            SystemAPI.Query<RefRO<NetworkId>>()
+            .WithAll<NetworkStreamConnection>()
+            .WithEntityAccess())
+        {
+            if (netId.ValueRO.Value == spawnData.ownerNetworkId)
+            {
+                playerConnection = connEntity;
+                break;
+            }
+        }
+        // Award 10 points for spawning a unit
+        if (playerConnection != Entity.Null)
+        {
+            ServerScoreTrackingSystem.AwardPoints(buffer, playerConnection, 10, ScoreReason.UnitSpawn);
+        }
     }
 
     private float3 FindValidSpawnPosition(float3 buildingPosition, ref SystemState state)

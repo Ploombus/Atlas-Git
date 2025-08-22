@@ -9,9 +9,9 @@ using UnityEngine;
 public partial struct ServerPlayerResourceSystem : ISystem
 {
     private float resourceGenerationTimer;
-    private const float RESOURCE_GENERATION_INTERVAL = 5f; 
+    private const float RESOURCE_GENERATION_INTERVAL = 5f;                                  //UNUSED
     private const int STARTING_RESOURCES = 50; 
-    private const int RESOURCE_GENERATION_AMOUNT = 0; 
+    private const int RESOURCE_GENERATION_AMOUNT = 0;                                       //UNUSED
 
     public void OnCreate(ref SystemState state)
     {
@@ -30,8 +30,8 @@ public partial struct ServerPlayerResourceSystem : ISystem
         // Process resource addition requests from clients (for testing)
         ProcessResourceRequests(ref state, buffer);
 
-        // Generate resources periodically for all players
-        GenerateResourcesPeriodically(ref state, buffer, deltaTime);
+        // Generate resources periodically for all players                                  UNUSED 
+        //GenerateResourcesPeriodically(ref state, buffer, deltaTime);                      UNUSED
 
         // Sync resources to clients
         SyncResourcesToClients(ref state, buffer);
@@ -82,6 +82,8 @@ public partial struct ServerPlayerResourceSystem : ISystem
                 resources.resource2 += request.ValueRO.resource2ToAdd;
 
                 buffer.SetComponent(connection, resources);
+                ServerScoreTrackingSystem.TriggerScoreUpdate(buffer, connection,  //track added resource as score
+                request.ValueRO.resource1ToAdd, request.ValueRO.resource2ToAdd);
 
                 var netId = SystemAPI.GetComponent<NetworkId>(connection).Value;
 
@@ -99,7 +101,7 @@ public partial struct ServerPlayerResourceSystem : ISystem
         }
     }
 
-    private void GenerateResourcesPeriodically(ref SystemState state, EntityCommandBuffer buffer, float deltaTime)
+    private void GenerateResourcesPeriodically(ref SystemState state, EntityCommandBuffer buffer, float deltaTime)      //UNUSED
     {
         resourceGenerationTimer += deltaTime;
 

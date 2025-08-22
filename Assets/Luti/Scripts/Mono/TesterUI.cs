@@ -291,19 +291,15 @@ public class TesterUI : MonoBehaviour
     {
         if (selectedBuilding != Entity.Null)
         {
-            // Check if we own this building first
+            // Owner check
             if (!isOwnerOfSelectedBuilding)
             {
                 Debug.Log("Cannot spawn units from buildings you don't own");
                 return;
             }
 
-            // Don't do client-side resource validation anymore - let server handle it
-            // Just send the spawn request and server will validate
 
-            // Send spawn request RPC
             SendSpawnUnitRpc(selectedBuilding);
-
         }
     }
 

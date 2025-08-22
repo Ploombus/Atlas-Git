@@ -140,6 +140,7 @@ public partial struct GatheringServerSystem : ISystem
                                     var pr = SystemAPI.GetComponent<PlayerResources>(conn);
                                     pr.resource1 += 1;
                                     ecb.SetComponent(conn, pr);
+                                    ServerScoreTrackingSystem.TriggerScoreUpdate(ecb, conn, 1, 0); //one damage dealt for score tracking, so far it's just +1 score
 
                                     var rpc = ecb.CreateEntity();
                                     ecb.AddComponent(rpc, new SyncResourcesRpc { resource1 = pr.resource1, resource2 = pr.resource2 });
