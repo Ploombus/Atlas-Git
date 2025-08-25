@@ -231,6 +231,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerAuthoring
   color: {r: 1, g: 1, b: 1, a: 1}
+  FactionId: 0
 --- !u!114 &164458981789568015
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -294,4 +295,3 @@ MonoBehaviour:
   attackSlowdown: 0.7
   attackDuration: 1
   impactDelay: 0.55
-  stance: 0

@@ -56,7 +56,7 @@ partial struct EntitiesEventSystem : ISystem
 
             var colorId = (owner == -1) ? -1 : netId;
             var rgba = PlayerColorUtil.FromId(colorId);
-            spawnEntityBuffer.SetComponent(unitEntity, new Player { PlayerColor = rgba });
+            spawnEntityBuffer.SetComponent(unitEntity, new Owner { OwnerColor = rgba });
 
             // consume RPC
             spawnEntityBuffer.DestroyEntity(rpcEntity);

@@ -9,14 +9,14 @@ public partial struct ApplyPlayerTintSystem : ISystem
     public void OnUpdate(ref SystemState state)
     {
         foreach (var (animRef, player) in
-                 SystemAPI.Query<UnitAnimatorReference, RefRO<Player>>()
-                          .WithChangeFilter<Player>()) // only when value changes
+                 SystemAPI.Query<UnitAnimatorReference, RefRO<Owner>>()
+                          .WithChangeFilter<Owner>()) // only when value changes
         {
             var go = animRef.Value.gameObject;
             var tint = go.GetComponentInChildren<TintTarget>(true);
             if (tint == null || tint.rendererRef == null) continue;
 
-            var p = player.ValueRO.PlayerColor;
+            var p = player.ValueRO.OwnerColor;
             var mpb = new MaterialPropertyBlock();
             tint.rendererRef.GetPropertyBlock(mpb);
             var c = new Color(p.x, p.y, p.z, p.w);
@@ -26,14 +26,14 @@ public partial struct ApplyPlayerTintSystem : ISystem
         }
 
         foreach (var (animRef, player) in
-                 SystemAPI.Query<BarracksAnimatorReference, RefRO<Player>>()
-                          .WithChangeFilter<Player>()) // only when value changes
+                 SystemAPI.Query<BarracksAnimatorReference, RefRO<Owner>>()
+                          .WithChangeFilter<Owner>()) // only when value changes
         {
             var go = animRef.Value.gameObject;
             var tint = go.GetComponentInChildren<TintTarget>(true);
             if (tint == null || tint.rendererRef == null) continue;
 
-            var p = player.ValueRO.PlayerColor;
+            var p = player.ValueRO.OwnerColor;
             var mpb = new MaterialPropertyBlock();
             tint.rendererRef.GetPropertyBlock(mpb);
             var c = new Color(p.x, p.y, p.z, p.w);

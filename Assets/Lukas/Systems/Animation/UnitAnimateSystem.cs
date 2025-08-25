@@ -113,11 +113,26 @@ public partial struct UnitAnimateSystem : ISystem
                 lastSeenCancelTick = st.woodCancelTick
             });
         }
+        
+        // Ensure prev-pos exists for any animated unit (covers entities that already had UnitAnimatorReference)
+        foreach (var (lt, _, e) in
+                SystemAPI.Query<RefRO<LocalTransform>, UnitAnimatorReference>()
+                        .WithNone<AnimationPreviousPosition>()
+                        .WithEntityAccess())
+        {
+            buffer.AddComponent(e, new AnimationPreviousPosition
+            {
+                hasPreviousPosition = true,
+                previousPosition    = lt.ValueRO.Position,
+                samplePosition      = lt.ValueRO.Position,           // NEW
+                sampleTime          = SystemAPI.Time.ElapsedTime     // NEW
+            });
+        }
 
         // Animate predicted + interpolated (skip if dead)
-        foreach (var (localTransform, animatorReference, health, unitStats, unitModifiers, entity) in
-                 SystemAPI.Query<LocalTransform, UnitAnimatorReference, RefRO<HealthState>, RefRO<UnitStats>, RefRO<UnitModifiers>>()
-                          .WithEntityAccess())
+        foreach (var (localTransform, animatorReference, health, unitStats, unitModifiers, prevPosRW, entity) in
+         SystemAPI.Query<LocalTransform, UnitAnimatorReference, RefRO<HealthState>, RefRO<UnitStats>, RefRO<UnitModifiers>, RefRW<AnimationPreviousPosition>>()
+                  .WithEntityAccess())
         {
             var anim = animatorReference.Value;
             if (anim == null) continue;
@@ -132,12 +147,12 @@ public partial struct UnitAnimateSystem : ISystem
             if (isDead)
             {
                 anim.SetFloat("Locomotion", 0f, LOCOMOTION_DAMP, delta);
-                anim.SetFloat("Speed",      0f, SPEED_DAMP,      delta);
+                anim.SetFloat("Speed", 0f, SPEED_DAMP, delta);
                 continue;
             }
 
             // If we are currently in (or transitioning into) the wood state, suppress locomotion and force playrate
-            var stInfo  = anim.GetCurrentAnimatorStateInfo(BASE_LAYER);
+            var stInfo = anim.GetCurrentAnimatorStateInfo(BASE_LAYER);
             var nxtInfo = anim.GetNextAnimatorStateInfo(BASE_LAYER);
             bool inWood = (stInfo.fullPathHash == WoodStateHash) || (nxtInfo.fullPathHash == WoodStateHash);
 
@@ -146,8 +161,8 @@ public partial struct UnitAnimateSystem : ISystem
                 if (CHOP_SUPPRESS_LOCOMOTION)
                 {
                     anim.SetFloat("Locomotion", 0f, LOCOMOTION_DAMP, delta);
-                    anim.SetFloat("Forward",    0f, LOCOMOTION_DAMP, delta);
-                    anim.SetFloat("Strafe",     0f, LOCOMOTION_DAMP, delta);
+                    anim.SetFloat("Forward", 0f, LOCOMOTION_DAMP, delta);
+                    anim.SetFloat("Strafe", 0f, LOCOMOTION_DAMP, delta);
                 }
 
                 if (CHOP_FORCE_PLAYRATE)
@@ -162,40 +177,91 @@ public partial struct UnitAnimateSystem : ISystem
             {
                 // -------- Normal locomotion pipeline --------
 
-                // Planar velocity (predicted)
-                float3 vPlanar = SystemAPI.HasComponent<PhysicsVelocity>(entity)
-                    ? new float3(SystemAPI.GetComponent<PhysicsVelocity>(entity).Linear.x, 0f, SystemAPI.GetComponent<PhysicsVelocity>(entity).Linear.z)
-                    : float3.zero;
+                // Planar velocity: prefer transform-delta unless we are simulating locally (owner-predicted)
+                float3 posNow = localTransform.Position;
+                float3 vPlanar = float3.zero;
+
+                bool isSimulatingLocally =
+                    SystemAPI.HasComponent<Simulate>(entity) &&
+                    SystemAPI.HasComponent<GhostOwnerIsLocal>(entity);
+
+                // Per-frame transform delta (may be ~0 for some ordering)
+                float3 vFromTransform = float3.zero;
+                if (prevPosRW.ValueRO.hasPreviousPosition)
+                {
+                    float dt = math.max(1e-6f, delta);
+                    float3 dp = posNow - prevPosRW.ValueRO.previousPosition;
+                    dp.y = 0f;
+                    vFromTransform = dp / dt;
+                }
+
+                // Windowed estimator (~0.10s) — insensitive to tiny per-frame deltas
+                double now = SystemAPI.Time.ElapsedTime;
+                double dtWindow = now - prevPosRW.ValueRO.sampleTime;
+                float3 vWindow = float3.zero;
+                if (dtWindow >= 0.08) // ~80ms to 150ms is fine; pick 80ms for responsiveness
+                {
+                    float3 dps = posNow - prevPosRW.ValueRO.samplePosition;
+                    dps.y = 0f;
+                    float invDtW = (float)(1.0 / math.max(1e-6, dtWindow));
+                    vWindow = dps * invDtW;
+
+                    // advance the sampling window
+                    prevPosRW.ValueRW.samplePosition = posNow;
+                    prevPosRW.ValueRW.sampleTime     = now;
+                }
+
+                // Physics velocity only when we truly simulate locally
+                float3 vFromPhysics = float3.zero;
+                if (isSimulatingLocally && SystemAPI.HasComponent<PhysicsVelocity>(entity))
+                {
+                    var pv = SystemAPI.GetComponent<PhysicsVelocity>(entity).Linear;
+                    vFromPhysics = new float3(pv.x, 0f, pv.z);
+                }
+
+                // Pick the best signal in this order: physics (local), windowed, per-frame
+                vPlanar = vFromPhysics;
+                if (math.lengthsq(vPlanar) < 1e-10f) vPlanar = vWindow;
+                if (math.lengthsq(vPlanar) < 1e-10f) vPlanar = vFromTransform;
+
+                // Optional: clamp impossible spikes to keep animation sane
+                float speedCap = 20f;
+                float mag = math.length(vPlanar);
+                if (mag > speedCap) vPlanar *= speedCap / mag;
+
+                // update prev-pos cache every frame so enemies animate smoothly
+                prevPosRW.ValueRW.previousPosition    = posNow;
+                prevPosRW.ValueRW.hasPreviousPosition = true;
 
                 // Local axes
-                float3 fwd   = math.forward(localTransform.Rotation); fwd.y = 0f; fwd = math.normalizesafe(fwd, float3.zero);
-                float3 right = math.cross(math.up(), fwd);            right.y = 0f; right = math.normalizesafe(right, float3.zero);
+                float3 fwd = math.forward(localTransform.Rotation); fwd.y = 0f; fwd = math.normalizesafe(fwd, float3.zero);
+                float3 right = math.cross(math.up(), fwd); right.y = 0f; right = math.normalizesafe(right, float3.zero);
 
                 // Signed components
                 float forwardSpeed = math.dot(vPlanar, fwd);     // +forward, −back
-                float strafeSpeed  = math.dot(vPlanar, right);   // +right, −left
-                float planarSpeed  = math.length(vPlanar);
+                float strafeSpeed = math.dot(vPlanar, right);   // +right, −left
+                float planarSpeed = math.length(vPlanar);
 
                 // Locomotion 0..1 with optional easing + hysteresis (NO early returns)
-                float t         = math.saturate(planarSpeed / math.max(0.001f, RUN_FULL_MPS));
+                float t = math.saturate(planarSpeed / math.max(0.001f, RUN_FULL_MPS));
                 float locLinear = t;
-                float locEase   = math.lerp(locLinear, locLinear * locLinear * (3f - 2f * locLinear), math.saturate(LOC_EASE));
+                float locEase = math.lerp(locLinear, locLinear * locLinear * (3f - 2f * locLinear), math.saturate(LOC_EASE));
 
                 // Use previous smoothed Locomotion as a cheap state to decide if we "were moving"
-                float prevLoc   = anim.GetFloat("Locomotion");
-                bool  wasMoving = prevLoc > 0.1f;
+                float prevLoc = anim.GetFloat("Locomotion");
+                bool wasMoving = prevLoc > 0.1f;
 
                 // Hysteresis thresholds from one knob
                 float enterThresh = IDLE_TO_MOVING_MPS;
-                float exitThresh  = IDLE_TO_MOVING_MPS * HYSTERESIS_RATIO;
+                float exitThresh = IDLE_TO_MOVING_MPS * HYSTERESIS_RATIO;
 
                 // Decide moving/idle with hysteresis
                 bool moving = wasMoving ? (planarSpeed > exitThresh) : (planarSpeed > enterThresh);
 
                 // Stronger damping near idle so the fade is gentle
                 float nearIdle01 = math.saturate(locLinear * 2f); // 0..~0.5 is "near idle"
-                float locDamp    = math.lerp(LOCOMOTION_DAMP * LOCOMOTION_IDLE_DAMP_MULT, LOCOMOTION_DAMP, nearIdle01);
-                float speedDamp  = math.lerp(SPEED_DAMP      * SPEED_IDLE_DAMP_MULT,      SPEED_DAMP,      nearIdle01);
+                float locDamp = math.lerp(LOCOMOTION_DAMP * LOCOMOTION_IDLE_DAMP_MULT, LOCOMOTION_DAMP, nearIdle01);
+                float speedDamp = math.lerp(SPEED_DAMP * SPEED_IDLE_DAMP_MULT, SPEED_DAMP, nearIdle01);
 
                 // Apply Locomotion (0 when idle)
                 float locTarget = moving ? locEase : 0f;
@@ -203,9 +269,9 @@ public partial struct UnitAnimateSystem : ISystem
 
                 // Directional inputs (zeroed when idle so the tree sits at Idle node)
                 float forwardNorm = math.clamp(forwardSpeed / RUN_FULL_MPS, -1f, 1f);
-                float strafeNorm  = math.clamp(strafeSpeed  / RUN_FULL_MPS, -1f, 1f);
+                float strafeNorm = math.clamp(strafeSpeed / RUN_FULL_MPS, -1f, 1f);
                 anim.SetFloat("Forward", moving ? forwardNorm : 0f, locDamp, delta);
-                anim.SetFloat("Strafe",  moving ? strafeNorm  : 0f, locDamp, delta);
+                anim.SetFloat("Strafe", moving ? strafeNorm : 0f, locDamp, delta);
 
                 // Playback rate (Speed multiplier) — movement only
                 float absF = math.abs(forwardSpeed);
@@ -217,7 +283,7 @@ public partial struct UnitAnimateSystem : ISystem
                      absS * CLIP_STRAFE_MPS) / wSum;
 
                 // Convert world m/s to clip playrate so feet track distance
-                float playRate  = planarSpeed / math.max(0.5f, baseClipMps);
+                float playRate = planarSpeed / math.max(0.5f, baseClipMps);
                 float animSpeed = math.clamp(playRate, MIN_MOVE_PLAYRATE, MAX_MOVE_PLAYRATE);
 
                 // Idle plays authored rate (1f); movement uses floored/capped rate
@@ -283,6 +349,10 @@ public struct AnimationPreviousPosition : IComponentData
 {
     public bool   hasPreviousPosition;
     public float3 previousPosition;
+
+    // NEW: sampling window for robust planar velocity on interpolated ghosts
+    public float3 samplePosition;
+    public double sampleTime;
 }
 
 public struct WoodAnimClientCache : IComponentData

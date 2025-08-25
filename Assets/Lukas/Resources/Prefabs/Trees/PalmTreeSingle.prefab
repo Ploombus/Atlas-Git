@@ -202,6 +202,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 100006, guid: ef5cd9cdbb80e6849a5f7dd239d56605, type: 3}
       insertIndex: -1
       addedObject: {fileID: 3194873396415150713}
+    - targetCorrespondingSourceObject: {fileID: 100006, guid: ef5cd9cdbb80e6849a5f7dd239d56605, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: -5668856446745807444}
   m_SourcePrefab: {fileID: 100100000, guid: ef5cd9cdbb80e6849a5f7dd239d56605, type: 3}
 --- !u!4 &5486846953587750443 stripped
 Transform:
@@ -336,3 +339,16 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::TargetingSizeAuthoring
   radius: 1
   height: 8
+--- !u!114 &-5668856446745807444
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5486846953588238859}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8e6cabe67042a1a408473d270f614652, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::OwnershipAuthoring
+  color: {r: 1, g: 1, b: 1, a: 1}

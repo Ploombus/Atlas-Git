@@ -1,4 +1,19 @@
 <ui:UXML xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" noNamespaceSchemaLocation="../../../UIElementsSchema/UIElements.xsd" editor-extension-mode="False">
-    <Style src="project://database/Assets/Luti/UI/UIStyle.uss?fileID=7433441132597879392&amp;guid=8329185003e2be148aa0e0d66f1e8b99&amp;type=3#UIStyle" />
-    <ui:VisualElement style="flex-grow: 1;" />
+    <Style src="project://database/Assets/Luti/UI/ScoreboardStyles.uss?fileID=7433441132597879392&amp;guid=eaec9c6ac2253fb429acc1d22f517dcb&amp;type=3#ScoreboardStyles" />
+    <ui:VisualElement name="scoreboard-container" class="scoreboard-panel" style="top: 70px;">
+        <ui:VisualElement name="scoreboard-header" class="scoreboard-header">
+            <ui:Label text="SCOREBOARD" name="title-label" class="scoreboard-title" />
+        </ui:VisualElement>
+        <ui:VisualElement name="scores-container" class="scores-container" />
+        <ui:VisualElement name="local-player-container" class="local-player-container">
+            <ui:Label text="YOUR SCORE" class="local-player-label" />
+            <ui:VisualElement name="local-score-display" class="local-score-display">
+                <ui:Label name="local-total-score" text="0" class="local-total-score" />
+                <ui:VisualElement class="local-score-breakdown">
+                    <ui:Label name="local-resource1-score" text="Resource 1: 0" class="local-resource-score" />
+                    <ui:Label name="local-resource2-score" text="Resource 2: 0" class="local-resource-score" />
+                </ui:VisualElement>
+            </ui:VisualElement>
+        </ui:VisualElement>
+    </ui:VisualElement>
 </ui:UXML>

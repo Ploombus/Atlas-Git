@@ -1,6 +1,7 @@
 using Unity.Entities;
 using Unity.NetCode;
 using Unity.Mathematics;
+using Unity.Transforms;
 
 [UpdateInGroup(typeof(SimulationSystemGroup))]
 [WorldSystemFilter(WorldSystemFilterFlags.ServerSimulation)]
@@ -10,34 +11,62 @@ partial struct ApplyMoveRequestsServerSystem : ISystem
     {
         var em = state.EntityManager;
 
-        foreach (var (reqRW, targetsRW) in
-                 SystemAPI.Query<RefRW<UnitTargetsNetcode>, RefRW<UnitTargets>>())
+        foreach (var (reqRW, targetsRW, e) in
+                 SystemAPI.Query<RefRW<UnitTargetsNetcode>, RefRW<UnitTargets>>()
+                          .WithEntityAccess())
         {
             var req = reqRW.ValueRO;
             ref var targets = ref targetsRW.ValueRW;
 
-            // Only apply if this is a new order
             if (req.requestLastAppliedSequence == 0 ||
                 req.requestLastAppliedSequence == targets.lastAppliedSequence)
                 continue;
 
-            // Bump sequence and mark as having an active order
             targets.lastAppliedSequence = req.requestLastAppliedSequence;
-            targets.activeTargetSet     = true; // make authoritative here
-            targets.hasArrived          = false; // clear sticky-arrival on new order
+            targets.activeTargetSet     = true;
+            targets.hasArrived          = false;
 
-            // Follow vs Move
-            if (req.requestTargetEntity != Entity.Null &&
-                em.Exists(req.requestTargetEntity)) // defensive: target may be gone
+            if (req.requestTargetEntity != Entity.Null && em.Exists(req.requestTargetEntity))
             {
                 targets.targetEntity = req.requestTargetEntity;
-                // Keep last destination values around (useful for “return to” logic later)
+
+                if (em.HasComponent<LocalTransform>(req.requestTargetEntity))
+                {
+                    float3 myPos = 0f;
+                    if (em.HasComponent<LocalTransform>(e))
+                        myPos = em.GetComponentData<LocalTransform>(e).Position;
+
+                    float3 tPos = em.GetComponentData<LocalTransform>(req.requestTargetEntity).Position;
+                    float3 to   = tPos - myPos; to.y = 0f;
+                    targets.targetRotation = math.atan2(to.x, to.z);
+                }
+                else
+                {
+                    // Target may be static or missing LT here — just clear facing.
+                    targets.targetRotation = float.NaN;
+                }
+
+                if (em.HasComponent<Attacker>(e))
+                {
+                    var att = em.GetComponentData<Attacker>(e);
+                    att.attackMove = false;  // manual attack cancels A-move
+                    em.SetComponentData(e, att);
+                }
             }
             else
             {
+                // Move order (no explicit target)
                 targets.targetEntity        = Entity.Null;
+                targets.targetRotation      = float.NaN;
                 targets.destinationPosition = req.requestDestinationPosition;
                 targets.destinationRotation = req.requestDestinationRotation;
+
+                if (em.HasComponent<Attacker>(e))
+                {
+                    var att = em.GetComponentData<Attacker>(e);
+                    att.attackMove = req.requestAttackMove && req.requestActiveTargetSet;
+                    em.SetComponentData(e, att);
+                }
             }
         }
     }
@@ -49,9 +78,12 @@ partial struct ApplyMoveRequestsClientPredictSystem : ISystem
 {
     public void OnUpdate(ref SystemState state)
     {
-        foreach (var (reqRW, targetsRW) in
+        var em = state.EntityManager;
+
+        foreach (var (reqRW, targetsRW, e) in
                  SystemAPI.Query<RefRW<UnitTargetsNetcode>, RefRW<UnitTargets>>()
-                          .WithAll<GhostOwnerIsLocal, PredictedGhost>())
+                          .WithAll<GhostOwnerIsLocal, PredictedGhost>()
+                          .WithEntityAccess())
         {
             var req = reqRW.ValueRO;
             ref var targets = ref targetsRW.ValueRW;
@@ -61,18 +93,51 @@ partial struct ApplyMoveRequestsClientPredictSystem : ISystem
                 continue;
 
             targets.lastAppliedSequence = req.requestLastAppliedSequence;
-            targets.activeTargetSet     = true;   // mirror server intent
-            targets.hasArrived          = false;  // clear sticky-arrival locally too
+            targets.activeTargetSet     = true;
+            targets.hasArrived          = false;
 
             if (req.requestTargetEntity != Entity.Null)
             {
                 targets.targetEntity = req.requestTargetEntity;
+
+                if (em.Exists(req.requestTargetEntity) &&
+                    em.HasComponent<LocalTransform>(req.requestTargetEntity))
+                {
+                    float3 myPos = 0f;
+                    if (em.HasComponent<LocalTransform>(e))
+                        myPos = em.GetComponentData<LocalTransform>(e).Position;
+
+                    float3 tPos = em.GetComponentData<LocalTransform>(req.requestTargetEntity).Position;
+                    float3 to   = tPos - myPos; to.y = 0f;
+                    targets.targetRotation = math.atan2(to.x, to.z);
+                }
+                else
+                {
+                    // Target may be static or missing LT here — just clear facing
+                    targets.targetRotation = float.NaN;
+                }
+
+                if (em.HasComponent<Attacker>(e))
+                {
+                    var att = em.GetComponentData<Attacker>(e);
+                    att.attackMove = false;
+                    em.SetComponentData(e, att);
+                }
             }
             else
             {
+                // Move order (no explicit target)
                 targets.targetEntity        = Entity.Null;
+                targets.targetRotation      = float.NaN;
                 targets.destinationPosition = req.requestDestinationPosition;
                 targets.destinationRotation = req.requestDestinationRotation;
+
+                if (em.HasComponent<Attacker>(e))
+                {
+                    var att = em.GetComponentData<Attacker>(e);
+                    att.attackMove = req.requestAttackMove && req.requestActiveTargetSet;
+                    em.SetComponentData(e, att);
+                }
             }
         }
     }

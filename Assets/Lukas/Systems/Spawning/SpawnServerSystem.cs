@@ -40,15 +40,11 @@ partial struct SpawnServerSystem : ISystem
                 buffer.AddComponent(unitEntity, new GhostOwner { NetworkId = netId.ValueRO.Value });
                 buffer.SetComponent(unitEntity, LocalTransform.FromPosition(unitPosition));
 
-                //Setting without changing speed etc.
-                buffer.SetComponent(unitEntity, new UnitTargets
-                {
-                    destinationPosition = unitPosition,
-                });
+                buffer.SetComponent(unitEntity, SpawnTargetsAt(unitPosition));
 
                 int ownerId = netId.ValueRO.Value;
                 var rgba = PlayerColorUtil.FromId(ownerId);
-                buffer.SetComponent(unitEntity, new Player { PlayerColor = rgba });
+                buffer.SetComponent(unitEntity, new Owner { OwnerColor = rgba });
 
                 buffer.AppendToBuffer(entity, new LinkedEntityGroup { Value = unitEntity });
             }
@@ -62,7 +58,7 @@ partial struct SpawnServerSystem : ISystem
             // Set player color for the barracks (same as units)
             int ownerId2 = netId.ValueRO.Value;
             var rgba2 = PlayerColorUtil.FromId(ownerId2);
-            buffer.SetComponent(barracksEntity, new Player { PlayerColor = rgba2 });
+            buffer.SetComponent(barracksEntity, new Owner { OwnerColor = rgba2 });
 
             buffer.AppendToBuffer(entity, new LinkedEntityGroup { Value = barracksEntity });
 
@@ -86,10 +82,7 @@ partial struct SpawnServerSystem : ISystem
             var unitEntity = buffer.Instantiate(unitRef.unitPrefabEntity);
 
             buffer.SetComponent(unitEntity, LocalTransform.FromPosition(position));
-            buffer.SetComponent(unitEntity, new UnitTargets
-            {
-                destinationPosition = position,
-            });
+            buffer.SetComponent(unitEntity, SpawnTargetsAt(position));
 
             if (owner == 1)
             {
@@ -102,7 +95,7 @@ partial struct SpawnServerSystem : ISystem
 
             var colorId = (owner == -1) ? -1 : netId;
             var rgba = PlayerColorUtil.FromId(colorId);
-            buffer.SetComponent(unitEntity, new Player { PlayerColor = rgba });
+            buffer.SetComponent(unitEntity, new Owner { OwnerColor = rgba });
 
             // consume RPC
             buffer.DestroyEntity(rpcEntity);
@@ -119,6 +112,18 @@ partial struct SpawnServerSystem : ISystem
         else
             return UnityEngine.Random.Range(posgap, posmax);
     }
+
+    static UnitTargets SpawnTargetsAt(float3 position) => new UnitTargets
+    {
+        destinationPosition = position,
+        destinationRotation = float.NaN,
+        targetPosition      = float3.zero,
+        targetRotation      = float.NaN,
+        lastAppliedSequence = 0,
+        activeTargetSet     = false,
+        targetEntity        = Entity.Null,
+        hasArrived          = true
+    };
 }
 
 public struct CenterCameraRpc : IRpcCommand

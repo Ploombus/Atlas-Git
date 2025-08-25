@@ -12,12 +12,20 @@ public partial struct CombatServerSystem : ISystem
     public void OnCreate(ref SystemState state)
     {
         state.RequireForUpdate<NetworkStreamInGame>();
+        state.RequireForUpdate<FactionRelations>(); // masks required
+        state.RequireForUpdate<FactionCount>();     // bounds for mask indices
+        // CombatRules (FriendlyFireEnabled) is optional
     }
 
     public void OnUpdate(ref SystemState state)
     {
         float dt = SystemAPI.Time.DeltaTime;
         var em = state.EntityManager;
+
+        // Mask singletons (required in OnCreate)
+        var rel = SystemAPI.GetSingleton<FactionRelations>();
+        byte factionCount = SystemAPI.GetSingleton<FactionCount>().Value;
+        bool friendlyFire = SystemAPI.HasSingleton<CombatRules>() && SystemAPI.GetSingleton<CombatRules>().FriendlyFireEnabled;
 
         foreach (var (attackerLT, attackerRW, statsRO, unitTargetsRW, attackerEntity)
                  in SystemAPI.Query<
@@ -52,18 +60,13 @@ public partial struct CombatServerSystem : ISystem
                 if (th.currentStage == HealthStage.Dead) continue;
             }
 
-            // 5) "Not my owned" check
-            bool isEnemy = true;
-            if (SystemAPI.HasComponent<GhostOwner>(attackerEntity) &&
-                SystemAPI.HasComponent<GhostOwner>(target))
-            {
-                int myId     = SystemAPI.GetComponent<GhostOwner>(attackerEntity).NetworkId;
-                int targetId = SystemAPI.GetComponent<GhostOwner>(target).NetworkId;
-                isEnemy = (myId != targetId);
-            }
-            // else: if target has no GhostOwner, treat as enemy (neutral/AI)
+            // 5) Mask-only hostility gate (no owner fallback)
+            byte atkFaction = FactionUtility.EffectiveFaction(attackerEntity, em);
+            byte tgtFaction = FactionUtility.EffectiveFaction(target, em);
 
-            if (!isEnemy) continue;
+            bool hostile = FactionUtility.AreHostile(atkFaction, tgtFaction, rel, factionCount);
+            bool allowed = friendlyFire || hostile;
+            if (!allowed) continue;
 
             // 6) In-range check (planar)
             float3 aPos = attackerLT.ValueRO.Position;
@@ -79,7 +82,7 @@ public partial struct CombatServerSystem : ISystem
             // 7) Swing if off cooldown
             if (attackerRW.ValueRO.cooldownLeft <= 0f)
             {
-                // Apply 1 damage (same style as your legacy code)
+                // Apply 1 damage
                 if (SystemAPI.HasComponent<HealthState>(target))
                 {
                     var th = SystemAPI.GetComponent<HealthState>(target);

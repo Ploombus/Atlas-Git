@@ -1,0 +1,180 @@
+:root {
+}
+/* Main scoreboard container */
+.scoreboard-panel {
+    background-color: rgba(0, 0, 0, 0.8);
+    border-left-width: 2px;
+    border-right-width: 2px;
+    border-top-width: 2px;
+    border-bottom-width: 2px;
+    border-left-color: rgba(255, 255, 255, 0.3);
+    border-right-color: rgba(255, 255, 255, 0.3);
+    border-top-color: rgba(255, 255, 255, 0.3);
+    border-bottom-color: rgba(255, 255, 255, 0.3);
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
+    padding-left: 16px;
+    padding-right: 16px;
+    padding-top: 16px;
+    padding-bottom: 16px;
+    min-width: 300px;
+    max-width: 400px;
+    position: absolute;
+    top: 20px;
+    right: 20px;
+}
+
+/* Header styling */
+.scoreboard-header {
+    margin-bottom: 12px;
+    align-items: center;
+    justify-content: center;
+}
+
+.scoreboard-title {
+    font-size: 18px;
+    color: rgb(255, 255, 255);
+    -unity-font-style: bold;
+    -unity-text-align: middle-center;
+}
+
+/* Scores container */
+.scores-container {
+    flex-direction: column;
+    margin-bottom: 16px;
+}
+
+/* Individual player score entry */
+.player-score-entry {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    background-color: rgba(255, 255, 255, 0.1);
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    border-bottom-left-radius: 4px;
+    border-bottom-right-radius: 4px;
+    padding-left: 12px;
+    padding-right: 12px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    margin-bottom: 4px;
+    border-left-width: 1px;
+    border-right-width: 1px;
+    border-top-width: 1px;
+    border-bottom-width: 1px;
+    border-left-color: rgba(255, 255, 255, 0.2);
+    border-right-color: rgba(255, 255, 255, 0.2);
+    border-top-color: rgba(255, 255, 255, 0.2);
+    border-bottom-color: rgba(255, 255, 255, 0.2);
+}
+
+.player-score-entry:hover {
+    background-color: rgba(255, 255, 255, 0.15);
+}
+
+/* Player info section */
+.player-info {
+    flex-direction: column;
+    flex-grow: 1;
+}
+
+.player-name {
+    font-size: 14px;
+    color: rgb(255, 255, 255);
+    -unity-font-style: bold;
+}
+
+.player-id {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+/* Score info section */
+.score-info {
+    flex-direction: column;
+    align-items: flex-end;
+}
+
+.total-score {
+    font-size: 16px;
+    color: rgb(255, 215, 0); /* Gold color for total score */
+    -unity-font-style: bold;
+    margin-bottom: 2px;
+}
+
+.score-breakdown {
+    flex-direction: row;
+}
+
+.score-breakdown > * {
+    margin-left: 4px;
+    margin-right: 4px;
+}
+
+.resource-score {
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.8);
+}
+
+/* Local player section */
+.local-player-container {
+    border-top-width: 2px;
+    border-top-color: rgba(0, 255, 0, 0.5);
+    padding-top: 12px;
+    margin-top: 8px;
+}
+
+.local-player-label {
+    font-size: 12px;
+    color: rgb(0, 255, 0);
+    -unity-font-style: bold;
+    -unity-text-align: middle-center;
+    margin-bottom: 8px;
+}
+
+.local-score-display {
+    background-color: rgba(0, 255, 0, 0.1);
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    border-bottom-left-radius: 4px;
+    border-bottom-right-radius: 4px;
+    padding-left: 8px;
+    padding-right: 8px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    border-left-width: 1px;
+    border-right-width: 1px;
+    border-top-width: 1px;
+    border-bottom-width: 1px;
+    border-left-color: rgba(0, 255, 0, 0.3);
+    border-right-color: rgba(0, 255, 0, 0.3);
+    border-top-color: rgba(0, 255, 0, 0.3);
+    border-bottom-color: rgba(0, 255, 0, 0.3);
+    align-items: center;
+}
+
+.local-total-score {
+    font-size: 20px;
+    color: rgb(0, 255, 0);
+    -unity-font-style: bold;
+    -unity-text-align: middle-center;
+    margin-bottom: 4px;
+}
+
+.local-score-breakdown {
+    flex-direction: row;
+    justify-content: center;
+}
+
+.local-score-breakdown > * {
+    margin-left: 8px;
+    margin-right: 8px;
+}
+
+.local-resource-score {
+    font-size: 12px;
+    color: rgba(0, 255, 0, 0.8);
+}

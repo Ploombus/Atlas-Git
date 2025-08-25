@@ -7,9 +7,8 @@ using UnityEngine;
 using Unity.Collections;
 using Managers;
 
+[WorldSystemFilter(WorldSystemFilterFlags.ClientSimulation | WorldSystemFilterFlags.ServerSimulation)]
 [UpdateInGroup(typeof(PredictedSimulationSystemGroup))]
-//[UpdateAfter(typeof(ApplyMoveRequestsClientPredictSystem))]
-//[UpdateAfter(typeof(ApplyMoveRequestsServerSystem))]
 partial struct MovementSystem : ISystem
 {
     // ========================= KNOBS =========================
@@ -71,7 +70,6 @@ partial struct MovementSystem : ISystem
 
     // ===================== HELPERS =====================
 
-    // Steering turn-rate (used for velocity-direction blending caps)
     static float ComputeTurnRateRadPerSec(float currentSpeed, float topSpeed, float massKg)
     {
         const float turnRateAtZero = 7f;   // rad/s
@@ -90,7 +88,6 @@ partial struct MovementSystem : ISystem
         return baseRate * massScale; // rad/s
     }
 
-    // Visual yaw turn-rate (used only when rotating LocalTransform visually)
     static float ComputeYawTurnRateRadPerSec(float currentSpeed, float topSpeed, float massKg)
     {
         const float turnRateAtZero = 7f;  // rad/s
@@ -109,7 +106,6 @@ partial struct MovementSystem : ISystem
         return baseRate * massScale; // rad/s
     }
 
-    // --- Rotation helpers ---
     static float GetCurrentYaw(quaternion rot)
     {
         float3 fwd = math.rotate(rot, new float3(0f, 0f, 1f));
@@ -125,74 +121,15 @@ partial struct MovementSystem : ISystem
         float newYaw = currentYaw + applied;
         lt.Rotation = quaternion.RotateY(newYaw);
     }
-
-    // Find closest enemy unit within range (broadphase point-distance)
-    static bool TryFindAutoFacingTarget(
-        in CollisionWorld collisionWorld,
-        EntityManager em,
-        Entity self,
-        float3 selfPos,
-        float range,
-        int myNetId,
-        out float3 targetPos)
-    {
-        targetPos = default;
-
-        var input = new PointDistanceInput
-        {
-            Position    = selfPos,
-            MaxDistance = range,
-            Filter      = new CollisionFilter
-            {
-                BelongsTo   = ~0u,
-                CollidesWith= ~0u,
-                GroupIndex  = 0
-            }
-        };
-
-        var hits = new NativeList<DistanceHit>(Allocator.Temp);
-        bool any = collisionWorld.CalculateDistance(input, ref hits);
-
-        float bestDistSq = float.MaxValue;
-        Entity best = Entity.Null;
-
-        if (any)
-        {
-            for (int i = 0; i < hits.Length; i++)
-            {
-                var h = hits[i];
-                if (h.Entity == self) continue;
-
-                // Must be a Unit and have an owner and a transform
-                if (!em.HasComponent<Unit>(h.Entity)) continue;
-                if (!em.HasComponent<GhostOwner>(h.Entity)) continue;
-                if (!em.HasComponent<LocalTransform>(h.Entity)) continue;
-
-                // Enemy only
-                int owner = em.GetComponentData<GhostOwner>(h.Entity).NetworkId;
-                if (owner == myNetId) continue;
-
-                // Keep nearest
-                float3 p = em.GetComponentData<LocalTransform>(h.Entity).Position;
-                float d2 = math.lengthsq(p - selfPos);
-                if (d2 < bestDistSq)
-                {
-                    bestDistSq = d2;
-                    best = h.Entity;
-                    targetPos = p;
-                }
-            }
-        }
-
-        hits.Dispose();
-        return best != Entity.Null;
-    }
-
     // =====================================================================
 
+    public void OnCreate(ref SystemState state)
+    {
+        state.RequireForUpdate<NetworkStreamInGame>();
+    }
+    
     public void OnUpdate(ref SystemState state)
     {
-        // System check
         bool isInGame = CheckGameplayStateAccess.GetGameplayState(WorldManager.GetClientWorld());
         if (!isInGame) return;
 
@@ -202,15 +139,8 @@ partial struct MovementSystem : ISystem
         if (SystemAPI.TryGetSingleton<ClientServerTickRate>(out var tickRate) && tickRate.SimulationTickRate > 0)
             physicsDt = 1f / (float)tickRate.SimulationTickRate;
 
-        // Physics broadphase (if present)
         bool haveCollisionWorld = SystemAPI.TryGetSingleton<PhysicsWorldSingleton>(out var pws);
         CollisionWorld collisionWorld = haveCollisionWorld ? pws.CollisionWorld : default;
-
-        // My NetworkId (for enemy filtering)
-        int myNetId = -1;
-        bool myNetIdValid = SystemAPI.TryGetSingleton<NetworkId>(out var nid);
-        if (myNetIdValid) myNetId = nid.Value;
-
         bool skipDampingComp = SystemAPI.Time.ElapsedTime < 0.05;
 
         foreach ((
@@ -234,7 +164,7 @@ partial struct MovementSystem : ISystem
             float stickRadius = MIN_DISTANCE * STICK_RADIUS_MULT;
 
             float3 goalPosition = unitTargets.ValueRO.destinationPosition;
-            float goalRotation  = unitTargets.ValueRO.destinationRotation;
+            float goalRotation = unitTargets.ValueRO.destinationRotation;
 
             float3 toTarget = goalPosition - localTransform.ValueRO.Position;
             float distSq = math.lengthsq(toTarget);
@@ -258,37 +188,48 @@ partial struct MovementSystem : ISystem
                 }
             }
 
-            // Auto-facing when idle: closest enemy within attack range
-            bool autoFacingInRange = false;
-            float3 autoFacingTargetPos = default;
-
-            if (AUTO_FACE_WHEN_IDLE && haveCollisionWorld && myNetIdValid && SystemAPI.HasComponent<CombatStats>(unitEntity))
-            {
-                float attackRange = SystemAPI.GetComponentRO<CombatStats>(unitEntity).ValueRO.attackRange;
-                autoFacingInRange = TryFindAutoFacingTarget(
-                    collisionWorld,
-                    state.EntityManager,
-                    unitEntity,
-                    localTransform.ValueRO.Position,
-                    attackRange,
-                    myNetId,
-                    out autoFacingTargetPos);
-            }
-
             // ================= STICKY ARRIVAL =================
             if (unitTargets.ValueRO.hasArrived)
             {
-                if (distSq <= stickRadius * stickRadius && !unitTargets.ValueRO.activeTargetSet)
+                bool chasing = unitTargets.ValueRO.targetEntity != Entity.Null;
+                if (!chasing && SystemAPI.HasComponent<Attacker>(unitEntity))
+                {
+                    var att = SystemAPI.GetComponentRO<Attacker>(unitEntity).ValueRO;
+                    bool hasTargetFocus = math.isfinite(unitTargets.ValueRO.targetRotation);
+                    chasing =
+                        hasTargetFocus &&
+                        (
+                            (att.attackMove && unitTargets.ValueRO.activeTargetSet) ||
+                            (!unitTargets.ValueRO.activeTargetSet && att.autoTarget)
+                        );
+                }
+
+                if (distSq <= stickRadius * stickRadius &&
+                    !unitTargets.ValueRO.activeTargetSet &&
+                    !chasing)
                 {
                     if (math.length(physicsVelocity.ValueRO.Linear) <= MOVE_FACING_THRESHOLD)
                         physicsVelocity.ValueRW.Linear = float3.zero;
                     physicsVelocity.ValueRW.Angular = float3.zero;
 
-                    // --- Apply rotation even while "sticking" ---
+                    // rotation while sticking
                     {
                         float speedNow = math.length(physicsVelocity.ValueRO.Linear);
                         float3 pos = localTransform.ValueRO.Position;
                         float targetYaw = GetCurrentYaw(localTransform.ValueRO.Rotation); // default: keep
+
+                        bool hasTargetFocus = math.isfinite(unitTargets.ValueRO.targetRotation);
+                        bool hasExplicitFocus = unitTargets.ValueRO.targetEntity != Entity.Null && hasTargetFocus;
+
+                        // keep your existing gate for auto-focus (A-move / idle auto)
+                        bool faceFocusWhenIdleOrAMove = false;
+                        if (SystemAPI.HasComponent<Attacker>(unitEntity))
+                        {
+                            var att = SystemAPI.GetComponentRO<Attacker>(unitEntity).ValueRO;
+                            faceFocusWhenIdleOrAMove =
+                                (att.attackMove && unitTargets.ValueRO.activeTargetSet) ||
+                                (!unitTargets.ValueRO.activeTargetSet && att.autoTarget);
+                        }
 
                         if (speedNow >= MOVE_FACING_THRESHOLD)
                         {
@@ -296,22 +237,27 @@ partial struct MovementSystem : ISystem
                             dir.y = 0f;
                             if (math.lengthsq(dir) > 1e-12f) targetYaw = math.atan2(dir.x, dir.z);
                         }
+                        else if (hasExplicitFocus)
+                        {
+                            // Explicit follow (tree/building/unit) → face the focus center
+                            targetYaw = unitTargets.ValueRO.targetRotation;
+                        }
+                        else if (hasTargetFocus && faceFocusWhenIdleOrAMove)
+                        {
+                            // Auto-focus (A-move/idle auto)
+                            float3 toF = unitTargets.ValueRO.targetPosition - pos; toF.y = 0f;
+                            if (math.lengthsq(toF) > 1e-12f) targetYaw = math.atan2(toF.x, toF.z);
+                        }
                         else if (targetInRangeForFacing)
                         {
                             float3 toTgt = unitTargets.ValueRO.targetPosition - pos; toTgt.y = 0f;
                             if (math.lengthsq(toTgt) > 1e-12f) targetYaw = math.atan2(toTgt.x, toTgt.z);
-                        }
-                        else if (autoFacingInRange) // NEW: idle auto-face
-                        {
-                            float3 toAuto = autoFacingTargetPos - pos; toAuto.y = 0f;
-                            if (math.lengthsq(toAuto) > 1e-12f) targetYaw = math.atan2(toAuto.x, toAuto.z);
                         }
                         else if (math.isfinite(goalRotation))
                         {
                             targetYaw = goalRotation;
                         }
 
-                        // Turn-rate model (visual yaw only)
                         float moveSpeedForTurn = unitStats.ValueRO.moveSpeed * unitModifiers.ValueRO.moveSpeedMultiplier;
                         float massKgForTurn = math.max(0.1f, unitStats.ValueRO.weight);
                         if (SystemAPI.HasComponent<PhysicsMass>(unitEntity))
@@ -338,68 +284,164 @@ partial struct MovementSystem : ISystem
             // ================= ARRIVAL TRIGGER =================
             if (distSq <= minDistance * minDistance)
             {
-                unitTargets.ValueRW.hasArrived = true;
-                unitTargets.ValueRW.activeTargetSet = false;
-
-                if (SystemAPI.HasComponent<UnitTargetsNetcode>(unitEntity))
+                bool chasing = unitTargets.ValueRO.targetEntity != Entity.Null;
+                if (!chasing && SystemAPI.HasComponent<Attacker>(unitEntity))
                 {
-                    var net = SystemAPI.GetComponentRW<UnitTargetsNetcode>(unitEntity);
-                    net.ValueRW.requestActiveTargetSet = false;
+                    var att = SystemAPI.GetComponentRO<Attacker>(unitEntity).ValueRO;
+                    bool hasTargetFocus = math.isfinite(unitTargets.ValueRO.targetRotation);
+                    chasing =
+                        hasTargetFocus &&
+                        (
+                            (att.attackMove && unitTargets.ValueRO.activeTargetSet) ||
+                            (!unitTargets.ValueRO.activeTargetSet && att.autoTarget)
+                        );
                 }
 
-                physicsVelocity.ValueRW.Linear = float3.zero;
-                physicsVelocity.ValueRW.Angular = float3.zero;
-
-                // --- Apply rotation on arrival (prefer target, then auto, then goal) ---
+                if (!chasing)
                 {
-                    float speedNow = 0f; // we just zeroed linear
-                    float3 pos = localTransform.ValueRO.Position;
-                    float targetYaw = GetCurrentYaw(localTransform.ValueRO.Rotation); // default: keep
+                    unitTargets.ValueRW.hasArrived = true;
 
-                    if (targetInRangeForFacing)
+                    bool keepAMove = false;
+                    if (SystemAPI.HasComponent<Attacker>(unitEntity))
+                        keepAMove = SystemAPI.GetComponentRO<Attacker>(unitEntity).ValueRO.attackMove;
+
+                    if (!keepAMove)
                     {
-                        float3 toTgt = unitTargets.ValueRO.targetPosition - pos; toTgt.y = 0f;
-                        if (math.lengthsq(toTgt) > 1e-12f) targetYaw = math.atan2(toTgt.x, toTgt.z);
-                    }
-                    else if (autoFacingInRange) // NEW
-                    {
-                        float3 toAuto = autoFacingTargetPos - pos; toAuto.y = 0f;
-                        if (math.lengthsq(toAuto) > 1e-12f) targetYaw = math.atan2(toAuto.x, toAuto.z);
-                    }
-                    else if (math.isfinite(goalRotation))
-                    {
-                        targetYaw = goalRotation;
+                        unitTargets.ValueRW.activeTargetSet = false;
+
+                        if (SystemAPI.HasComponent<UnitTargetsNetcode>(unitEntity))
+                        {
+                            var net = SystemAPI.GetComponentRW<UnitTargetsNetcode>(unitEntity);
+                            net.ValueRW.requestActiveTargetSet = false;
+                        }
                     }
 
-                    float moveSpeedForTurn = unitStats.ValueRO.moveSpeed * unitModifiers.ValueRO.moveSpeedMultiplier;
-                    float massKgForTurn = math.max(0.1f, unitStats.ValueRO.weight);
-                    if (SystemAPI.HasComponent<PhysicsMass>(unitEntity))
-                    {
-                        float invMass = SystemAPI.GetComponentRO<PhysicsMass>(unitEntity).ValueRO.InverseMass;
-                        if (invMass > 0f) massKgForTurn = 1f / invMass;
-                    }
-                    float turnRate = ComputeYawTurnRateRadPerSec(speedNow, math.max(0.1f, moveSpeedForTurn), massKgForTurn) * ROT_YAW_TURN_RATE_MULT;
-                    float globalCap = math.radians(MAX_YAW_DEG_PER_SEC);
-                    if (globalCap > 0f) turnRate = math.min(turnRate, globalCap);
-                    float maxDeltaYaw = turnRate * deltaTime;
+                    physicsVelocity.ValueRW.Linear  = float3.zero;
+                    physicsVelocity.ValueRW.Angular = float3.zero;
 
-                    RotateYawToward(ref localTransform.ValueRW, targetYaw, maxDeltaYaw);
+                    // arrival facing
+                    {
+                        float speedNow = 0f; // we just zeroed linear
+                        float3 pos = localTransform.ValueRO.Position;
+                        float targetYaw = GetCurrentYaw(localTransform.ValueRO.Rotation);
+
+                        bool hasTargetFocus = math.isfinite(unitTargets.ValueRO.targetRotation);
+                        bool hasExplicitFocus = unitTargets.ValueRO.targetEntity != Entity.Null && hasTargetFocus;
+
+                        bool faceFocusWhenIdleOrAMove = false;
+                        if (SystemAPI.HasComponent<Attacker>(unitEntity))
+                        {
+                            var att = SystemAPI.GetComponentRO<Attacker>(unitEntity).ValueRO;
+                            faceFocusWhenIdleOrAMove =
+                                (att.attackMove && unitTargets.ValueRO.activeTargetSet) ||
+                                (!unitTargets.ValueRO.activeTargetSet && att.autoTarget);
+                        }
+
+                        if (hasExplicitFocus)
+                        {
+                            targetYaw = unitTargets.ValueRO.targetRotation;
+                        }
+                        else if (hasTargetFocus && faceFocusWhenIdleOrAMove)
+                        {
+                            float3 toF = unitTargets.ValueRO.targetPosition - pos; toF.y = 0f;
+                            if (math.lengthsq(toF) > 1e-12f) targetYaw = math.atan2(toF.x, toF.z);
+                        }
+                        else if (targetInRangeForFacing)
+                        {
+                            float3 toTgt = unitTargets.ValueRO.targetPosition - pos; toTgt.y = 0f;
+                            if (math.lengthsq(toTgt) > 1e-12f) targetYaw = math.atan2(toTgt.x, toTgt.z);
+                        }
+                        else if (math.isfinite(goalRotation))
+                        {
+                            targetYaw = goalRotation;
+                        }
+
+                        float moveSpeedForTurn = unitStats.ValueRO.moveSpeed * unitModifiers.ValueRO.moveSpeedMultiplier;
+                        float massKgForTurn = math.max(0.1f, unitStats.ValueRO.weight);
+                        if (SystemAPI.HasComponent<PhysicsMass>(unitEntity))
+                        {
+                            float invMass = SystemAPI.GetComponentRO<PhysicsMass>(unitEntity).ValueRO.InverseMass;
+                            if (invMass > 0f) massKgForTurn = 1f / invMass;
+                        }
+                        float turnRate = ComputeYawTurnRateRadPerSec(speedNow, math.max(0.1f, moveSpeedForTurn), massKgForTurn) * ROT_YAW_TURN_RATE_MULT;
+                        float globalCap = math.radians(MAX_YAW_DEG_PER_SEC);
+                        if (globalCap > 0f) turnRate = math.min(turnRate, globalCap);
+                        float maxDeltaYaw = turnRate * deltaTime;
+
+                        RotateYawToward(ref localTransform.ValueRW, targetYaw, maxDeltaYaw);
+                    }
+
+                    continue;
                 }
-
-                continue;
+                else
+                {
+                    // chasing -> do not park; let movement core run
+                    unitTargets.ValueRW.hasArrived = false;
+                }
             }
 
-            // ================= MOVE VECTOR & PRE-FACING =================
-            float distanceToGoal = math.sqrt(distSq);
-            float3 moveDirection = (distanceToGoal > 0.0001f) ? (toTarget / distanceToGoal) : float3.zero;
+            // ================= MOVE VECTOR & PRE-FACING (choose steer point) =================
+            float3 position = localTransform.ValueRO.Position;
+
+            bool allowTargetSteer = unitTargets.ValueRO.targetEntity != Entity.Null; // explicit follow always steers
+            if (!allowTargetSteer && SystemAPI.HasComponent<Attacker>(unitEntity))
+            {
+                var att = SystemAPI.GetComponentRO<Attacker>(unitEntity).ValueRO;
+                if (att.attackMove && unitTargets.ValueRO.activeTargetSet)
+                    allowTargetSteer = true;
+                else if (!unitTargets.ValueRO.activeTargetSet && att.autoTarget)
+                    allowTargetSteer = true;
+            }
+
+            bool hasTargetFocusSteer = math.isfinite(unitTargets.ValueRO.targetRotation);
+
+            float3 steerPoint = (allowTargetSteer && hasTargetFocusSteer)
+                ? unitTargets.ValueRO.targetPosition
+                : goalPosition;
+
+            float3 toSteer = steerPoint - position; toSteer.y = 0f;
+            float steerDistSq = math.lengthsq(toSteer);
+
+            // === What are we steering toward? ===
+            bool steeringToFocus = (allowTargetSteer && hasTargetFocusSteer);
+            bool steeringToEnemyUnit = false;
+
+            if (steeringToFocus && unitTargets.ValueRO.targetEntity != Entity.Null)
+            {
+                var t = unitTargets.ValueRO.targetEntity;
+
+                if (SystemAPI.HasComponent<Unit>(t))
+                {
+                    if (SystemAPI.TryGetSingleton<FactionRelations>(out var rel) &&
+                        SystemAPI.TryGetSingleton<FactionCount>(out var fCount) &&
+                        SystemAPI.HasComponent<Faction>(unitEntity) &&
+                        SystemAPI.HasComponent<Faction>(t))
+                    {
+                        byte meF = SystemAPI.GetComponent<Faction>(unitEntity).FactionId;
+                        byte tgF = SystemAPI.GetComponent<Faction>(t).FactionId;
+                        steeringToEnemyUnit = FactionUtility.AreHostile(meF, tgF, rel, fCount.Value);
+                    }
+                    else if (SystemAPI.HasComponent<GhostOwner>(unitEntity) && SystemAPI.HasComponent<GhostOwner>(t))
+                    {
+                        int me = SystemAPI.GetComponent<GhostOwner>(unitEntity).NetworkId;
+                        int tg = SystemAPI.GetComponent<GhostOwner>(t).NetworkId;
+                        steeringToEnemyUnit = (me != tg) && (me != int.MinValue) && (tg != int.MinValue);
+                    }
+                }
+            }
+
+            bool isCharging = SystemAPI.HasComponent<Attacker>(unitEntity)
+                && SystemAPI.GetComponentRO<Attacker>(unitEntity).ValueRO.isCharging;
+
+            float3 moveDirection = (steerDistSq > 0.0001f)
+                ? (toSteer / math.sqrt(steerDistSq))
+                : float3.zero;
 
             // ================= MOVEMENT CORE =================
 
-            // Scalars
             float speedMultiplier = unitModifiers.ValueRO.moveSpeedMultiplier;
             float moveSpeed = unitStats.ValueRO.moveSpeed;
 
-            // Attack slowdown
             if (SystemAPI.HasComponent<Attacker>(unitEntity) && SystemAPI.HasComponent<CombatStats>(unitEntity))
             {
                 var attacker = SystemAPI.GetComponentRO<Attacker>(unitEntity);
@@ -412,7 +454,6 @@ partial struct MovementSystem : ISystem
             }
             moveSpeed *= speedMultiplier;
 
-            // Mass & accel/decel scaling
             float massKg = math.max(0.1f, unitStats.ValueRO.weight);
             if (SystemAPI.HasComponent<PhysicsMass>(unitEntity))
             {
@@ -423,19 +464,16 @@ partial struct MovementSystem : ISystem
             float accelPerSecond = math.clamp(ACCEL_AT_REF / math.max(0.01f, massScale), MIN_ACCEL, MAX_ACCEL);
             float decelPerSecond = math.clamp(DECEL_AT_REF / math.max(0.01f, massScale), MIN_DECEL, MAX_DECEL);
 
-            // Current velocity state
             float3 vNow = physicsVelocity.ValueRO.Linear;
-            float  vNowMag = math.length(vNow);
+            float vNowMag = math.length(vNow);
             float3 vNowDir = math.normalizesafe(vNow, float3.zero);
 
-            // Speed-aware turn limit (steering, not visual yaw)
             float maxTurnRate = ComputeTurnRateRadPerSec(vNowMag, math.max(0.1f, moveSpeed), massKg) * ROT_STEER_TURN_RATE_MULT;
             float maxAngle = maxTurnRate * deltaTime;
 
-            // Desired direction & target speed (baseline)
-            float3 inputDir   = math.normalizesafe(moveDirection, float3.zero);
+            float3 inputDir = math.normalizesafe(moveDirection, float3.zero);
             float3 desiredDir = inputDir;
-            float  headingAngle = 0f;
+            float headingAngle = 0f;
 
             if (math.lengthsq(vNowDir) > 1e-12f && math.lengthsq(inputDir) > 1e-12f)
             {
@@ -454,71 +492,79 @@ partial struct MovementSystem : ISystem
 
             float targetSpeed = (math.lengthsq(moveDirection) > 1e-8f) ? moveSpeed : 0f;
 
-            // Heading-error slowdown
-            float cosHeading   = (headingAngle > 0f) ? math.cos(headingAngle) : 1f;
+            float cosHeading = (headingAngle > 0f) ? math.cos(headingAngle) : 1f;
             float headingScale = (cosHeading > 0f) ? math.pow(cosHeading, HEADING_CURVE_EXP) : 0f;
             if (headingAngle < math.radians(TURN_BRAKE_START_DEG))
                 if (headingScale < HEADING_THROTTLE_FLOOR) headingScale = HEADING_THROTTLE_FLOOR;
             targetSpeed *= headingScale;
 
-            // ---- Arrival slowdown (distance-based cap) ----
+            // === Arrival / braking (gated by charge override) ===
             if (distSq <= ARRIVE_MAX_DIST * ARRIVE_MAX_DIST)
             {
-                float v     = vNowMag;
-                float a     = math.max(0.01f, decelPerSecond);
-                float dStop = (v * v) / (2f * a);
-                float rPhys = ARRIVE_MIN_DIST + ARRIVE_SAFETY * dStop;
-
-                float speedFrac = (moveSpeed > 1e-4f) ? math.saturate(v / moveSpeed) : 0f;
-                float wRel      = (massKg / REF_MASS_KG) - 1f;
-                float rScaled   = rPhys
-                                * (1f + ARRIVE_SPEED_INFLUENCE  * speedFrac)
-                                * (1f + ARRIVE_WEIGHT_INFLUENCE * wRel);
-
-                float arrivalRadius = math.clamp(rScaled, ARRIVE_MIN_DIST, ARRIVE_MAX_DIST);
-
-                float dist = math.sqrt(distSq);
-                if (dist <= arrivalRadius)
+                bool skipCap = steeringToFocus && steeringToEnemyUnit && isCharging;
+                if (!skipCap)
                 {
-                    float p   = math.lerp(1f, 3f, math.saturate(ARRIVE_CAP_CURVE));
-                    float s   = math.saturate(dist / math.max(0.001f, arrivalRadius));
-                    float vCap = moveSpeed * math.pow(s, p);
-                    vCap       = math.max(vCap, ARRIVE_SPEED_FLOOR_MPS);
-                    targetSpeed = math.min(targetSpeed, vCap);
+                    // Use steer distance when following; else destination distance
+                    float distanceForArrivalSq = steeringToFocus ? steerDistSq : distSq;
+
+                    float v = vNowMag;
+                    float a = math.max(0.01f, decelPerSecond);
+                    float dStop = (v * v) / (2f * a);
+                    float rPhys = ARRIVE_MIN_DIST + ARRIVE_SAFETY * dStop;
+
+                    float speedFrac = (moveSpeed > 1e-4f) ? math.saturate(v / moveSpeed) : 0f;
+                    float wRel = (massKg / REF_MASS_KG) - 1f;
+                    float rScaled = rPhys
+                                    * (1f + ARRIVE_SPEED_INFLUENCE * speedFrac)
+                                    * (1f + ARRIVE_WEIGHT_INFLUENCE * wRel);
+
+                    float arrivalRadius = math.clamp(rScaled, ARRIVE_MIN_DIST, ARRIVE_MAX_DIST);
+
+                    float distForCap = math.sqrt(distanceForArrivalSq);
+                    if (distForCap <= arrivalRadius)
+                    {
+                        float p = math.lerp(1f, 3f, math.saturate(ARRIVE_CAP_CURVE));
+                        float s = math.saturate(distForCap / math.max(0.001f, arrivalRadius));
+                        float vCap = moveSpeed * math.pow(s, p);
+
+                        // Keep a floor ONLY when explicitly charging through an enemy unit.
+                        // Otherwise (trees/buildings/friendlies, or enemy units when not charging) allow full stop.
+                        bool chargeThrough = (steeringToFocus && steeringToEnemyUnit && isCharging);
+                        float speedFloor   = chargeThrough ? ARRIVE_SPEED_FLOOR_MPS : 0f;
+
+                        vCap = math.max(vCap, speedFloor);
+                        targetSpeed = math.min(targetSpeed, vCap);
+                    }
                 }
             }
 
-            // Decompose velocity relative to desiredDir
-            float  vParallelMag = 0f;
+            float vParallelMag = 0f;
             float3 vParallel = float3.zero;
             float3 vLateral = vNow;
             if (math.lengthsq(desiredDir) > 1e-12f)
             {
                 vParallelMag = math.dot(vNow, desiredDir);
-                vParallel    = desiredDir * vParallelMag;
-                vLateral     = vNow - vParallel;
+                vParallel = desiredDir * vParallelMag;
+                vLateral = vNow - vParallel;
             }
 
-            // Read linear damping (Unity Physics)
             float damping = 0f;
             if (SystemAPI.HasComponent<PhysicsDamping>(unitEntity))
                 damping = SystemAPI.GetComponentRO<PhysicsDamping>(unitEntity).ValueRO.Linear;
 
-            // Forward accel
             float desiredForwardDelta = targetSpeed - vParallelMag;
             float maxDeltaVForward = ((desiredForwardDelta >= 0f) ? accelPerSecond : decelPerSecond) * deltaTime;
             desiredForwardDelta = math.clamp(desiredForwardDelta, -maxDeltaVForward, maxDeltaVForward);
             float3 deltaVForward = desiredDir * desiredForwardDelta;
 
-            // LATERAL slip reduction (traction-like)
             float3 deltaVLateral = float3.zero;
             float lateralSpeed = math.length(vLateral);
             if (lateralSpeed > 1e-6f)
             {
-                float speedFrac = vNowMag / math.max(0.1f, moveSpeed);
-                speedFrac = math.clamp(speedFrac, 0f, 1f);
-                speedFrac = math.pow(speedFrac, LATERAL_KILL_EXP);
-                float speedKillScale = math.lerp(LATERAL_KILL_MIN, LATERAL_KILL_MAX, speedFrac);
+                float speedFrac2 = vNowMag / math.max(0.1f, moveSpeed);
+                speedFrac2 = math.clamp(speedFrac2, 0f, 1f);
+                speedFrac2 = math.pow(speedFrac2, LATERAL_KILL_EXP);
+                float speedKillScale = math.lerp(LATERAL_KILL_MIN, LATERAL_KILL_MAX, speedFrac2);
                 float massFactor = math.pow(REF_MASS_KG / math.max(1f, massKg), LATERAL_MASS_EXP);
                 float maxDeltaVLateral = accelPerSecond * speedKillScale * massFactor * deltaTime;
 
@@ -527,7 +573,6 @@ partial struct MovementSystem : ISystem
                 deltaVLateral = -lateralDir * killAmount;
             }
 
-            // Turn braking
             if (headingAngle > math.radians(TURN_BRAKE_START_DEG) && math.lengthsq(moveDirection) > 1e-8f)
             {
                 float speedNowTB = vNowMag;
@@ -545,7 +590,6 @@ partial struct MovementSystem : ISystem
                 }
             }
 
-            // Idle braking
             if (math.lengthsq(moveDirection) <= 1e-8f)
             {
                 float speedNowIB = vNowMag;
@@ -558,22 +602,25 @@ partial struct MovementSystem : ISystem
                 }
             }
 
-            // Combine deltas
             float3 vNew = vNow + deltaVForward + deltaVLateral;
 
-            // Tiny snap when basically at target (kill jitter)
-            if (distSq < SNAP_STOP_DIST_SQ)
+            // === Snap / stop — gated like the arrival cap ===
             {
-                vNew = float3.zero;
-            }
-            else
-            {
-                // Linear-damping pre-comp using NetCode simulation dt
-                if (!skipDampingComp && damping > 1e-6f && math.lengthsq(vNew) > 1e-12f)
+                float snapDistSq = steeringToFocus ? steerDistSq : distSq;
+                bool snapEnabled = !(steeringToFocus && steeringToEnemyUnit && isCharging);
+
+                if (snapEnabled && snapDistSq < SNAP_STOP_DIST_SQ)
                 {
-                    float k = 1f - damping * physicsDt;
-                    if (k > 0.0f)
-                        vNew /= k;
+                    vNew = float3.zero;
+                }
+                else
+                {
+                    if (!skipDampingComp && damping > 1e-6f && math.lengthsq(vNew) > 1e-12f)
+                    {
+                        float k = 1f - damping * physicsDt;
+                        if (k > 0.0f)
+                            vNew /= k;
+                    }
                 }
             }
 
@@ -581,7 +628,19 @@ partial struct MovementSystem : ISystem
             {
                 float speedNow = math.length(vNew);
                 float3 pos = localTransform.ValueRO.Position;
-                float targetYaw = GetCurrentYaw(localTransform.ValueRO.Rotation); // default: keep
+                float targetYaw = GetCurrentYaw(localTransform.ValueRO.Rotation);
+
+                bool hasTargetFocus = math.isfinite(unitTargets.ValueRO.targetRotation);
+                bool hasExplicitFocus = unitTargets.ValueRO.targetEntity != Entity.Null && hasTargetFocus;
+
+                bool faceFocusWhenIdleOrAMove = false;
+                if (SystemAPI.HasComponent<Attacker>(unitEntity))
+                {
+                    var att = SystemAPI.GetComponentRO<Attacker>(unitEntity).ValueRO;
+                    faceFocusWhenIdleOrAMove =
+                        (att.attackMove && unitTargets.ValueRO.activeTargetSet) ||
+                        (!unitTargets.ValueRO.activeTargetSet && att.autoTarget);
+                }
 
                 if (speedNow >= MOVE_FACING_THRESHOLD)
                 {
@@ -589,15 +648,19 @@ partial struct MovementSystem : ISystem
                     dir.y = 0f;
                     if (math.lengthsq(dir) > 1e-12f) targetYaw = math.atan2(dir.x, dir.z);
                 }
+                else if (hasExplicitFocus)
+                {
+                    targetYaw = unitTargets.ValueRO.targetRotation;
+                }
+                else if (hasTargetFocus && faceFocusWhenIdleOrAMove)
+                {
+                    float3 toF = unitTargets.ValueRO.targetPosition - pos; toF.y = 0f;
+                    if (math.lengthsq(toF) > 1e-12f) targetYaw = math.atan2(toF.x, toF.z);
+                }
                 else if (targetInRangeForFacing)
                 {
                     float3 toTgt = unitTargets.ValueRO.targetPosition - pos; toTgt.y = 0f;
                     if (math.lengthsq(toTgt) > 1e-12f) targetYaw = math.atan2(toTgt.x, toTgt.z);
-                }
-                else if (autoFacingInRange) // NEW: idle auto-face
-                {
-                    float3 toAuto = autoFacingTargetPos - pos; toAuto.y = 0f;
-                    if (math.lengthsq(toAuto) > 1e-12f) targetYaw = math.atan2(toAuto.x, toAuto.z);
                 }
                 else if (math.isfinite(goalRotation))
                 {
@@ -612,7 +675,6 @@ partial struct MovementSystem : ISystem
                 RotateYawToward(ref localTransform.ValueRW, targetYaw, maxDeltaYaw);
             }
 
-            // ================= WRITE BACK VELOCITY =================
             physicsVelocity.ValueRW.Linear = vNew;
             physicsVelocity.ValueRW.Angular = float3.zero;
         }

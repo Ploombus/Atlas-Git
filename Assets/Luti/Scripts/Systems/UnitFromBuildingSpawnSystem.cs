@@ -228,7 +228,7 @@ public partial struct UnitFromBuildingSpawnSystem : ISystem
 
         // Set unit color based on owner
         var rgba = PlayerColorUtil.FromId(spawnData.ownerNetworkId);
-        buffer.SetComponent(unitEntity, new Player { PlayerColor = rgba });
+        buffer.SetComponent(unitEntity, new Owner { OwnerColor = rgba });
 
         // Set initial unit mover state
         buffer.SetComponent(unitEntity, new UnitTargets

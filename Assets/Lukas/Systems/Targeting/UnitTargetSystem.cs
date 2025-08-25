@@ -21,12 +21,14 @@ partial struct UnitTargetSystem : ISystem
     {
         state.RequireForUpdate<NetworkStreamInGame>();
         state.RequireForUpdate<UnitTargetsNetcode>();
+        state.RequireForUpdate<EntitiesReferencesLukas>();
 
         //doubleClickThreshold = 0.3f;
     }
 
     public void OnUpdate(ref SystemState state)
     {
+
         // In-Game check
         if (!CheckGameplayStateAccess.GetGameplayState(WorldManager.GetClientWorld())) return;
 
@@ -96,6 +98,9 @@ partial struct UnitTargetSystem : ISystem
                             quaternion.RotateY(-angleOffset + math.PI),
                             0.1f));
                 }
+                
+                targetPositionArray.Dispose();
+                emptyCurrentPositions.Dispose();
             }
             else
             {
@@ -139,6 +144,7 @@ partial struct UnitTargetSystem : ISystem
 
                 bufferEarly.Playback(state.EntityManager);
                 bufferEarly.Dispose();
+                emptyCurrentPositions.Dispose();
 
                 return; // <-- ADDED: stop here; don't run target raycast
             }
@@ -185,10 +191,9 @@ partial struct UnitTargetSystem : ISystem
 
                     unitTargetsNetcode.ValueRW.requestTargetEntity = hitEntity;
                     unitTargetsNetcode.ValueRW.requestActiveTargetSet = true;
+                    unitTargetsNetcode.ValueRW.requestAttackMove = false;
 
                     unitTargetsNetcode.ValueRW.requestLastAppliedSequence++;
-
-
                 }
 
                 buffer.Playback(state.EntityManager);
@@ -257,6 +262,7 @@ partial struct UnitTargetSystem : ISystem
 
                         SetDestinations(targetPositionArray, angleOffset, ref state);
                     }
+                    currentPositions.Dispose();
                 }
                 else
                 {
@@ -284,6 +290,7 @@ partial struct UnitTargetSystem : ISystem
 
                     buffer.Playback(state.EntityManager);
                     buffer.Dispose();
+                    emptyCurrentPositions.Dispose();
                 }
             }
             entityQuery.Dispose();
@@ -309,6 +316,9 @@ partial struct UnitTargetSystem : ISystem
             unitTargetsNetcode.ValueRW.requestDestinationPosition = position;
             unitTargetsNetcode.ValueRW.requestDestinationRotation = -angleOffset;
             unitTargetsNetcode.ValueRW.requestActiveTargetSet = true;
+
+            //AttackMove reads from UI
+            unitTargetsNetcode.ValueRW.requestAttackMove = AttackMoveUIState.IsAttackMove;
 
             // Bump sequence
             unitTargetsNetcode.ValueRW.requestLastAppliedSequence++;

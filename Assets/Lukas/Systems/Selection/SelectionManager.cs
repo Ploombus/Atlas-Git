@@ -311,41 +311,79 @@ public class SelectionManager : MonoBehaviour
         );
     }
 
-    static bool TryGetEntityScreenRect(EntityManager entityManager, Entity e, in LocalTransform lt, Camera cam, out Rect rect)
+    static bool TryGetEntityScreenRect(EntityManager em, Entity e, in LocalTransform lt, Camera cam, out Rect rect)
     {
-        // If the entity has a Unity.Physics collider, project its world AABB to screen
-        if (entityManager.HasComponent<PhysicsCollider>(e))
+        // 1) Preferred: use gameplay footprint if available
+        if (em.HasComponent<TargetingSize>(e))
         {
-            var pc = entityManager.GetComponentData<PhysicsCollider>(e);
+            float r = math.max(0f, em.GetComponentData<TargetingSize>(e).radius);
+            // Sample a horizontal circle at entity position (ground footprint)
+            float3 c = lt.Position;
+            float3 px = new float3(r, 0f, 0f);
+            float3 pz = new float3(0f, 0f, r);
+
+            Vector3[] pts =
+            {
+                cam.WorldToScreenPoint((Vector3)(c + px)),
+                cam.WorldToScreenPoint((Vector3)(c - px)),
+                cam.WorldToScreenPoint((Vector3)(c + pz)),
+                cam.WorldToScreenPoint((Vector3)(c - pz)),
+                cam.WorldToScreenPoint((Vector3)c),
+            };
+
+            bool any = false;
+            Vector2 scrMin = new Vector2(float.PositiveInfinity, float.PositiveInfinity);
+            Vector2 scrMax = new Vector2(float.NegativeInfinity, float.NegativeInfinity);
+
+            for (int i = 0; i < pts.Length; i++)
+            {
+                var sp = pts[i];
+                if (sp.z <= 0f) continue; // behind camera
+                any = true;
+                if (sp.x < scrMin.x) scrMin.x = sp.x;
+                if (sp.y < scrMin.y) scrMin.y = sp.y;
+                if (sp.x > scrMax.x) scrMax.x = sp.x;
+                if (sp.y > scrMax.y) scrMax.y = sp.y;
+            }
+
+            if (any)
+            {
+                rect = Rect.MinMaxRect(
+                    scrMin.x - DRAG_SELECT_PADDING_PX, scrMin.y - DRAG_SELECT_PADDING_PX,
+                    scrMax.x + DRAG_SELECT_PADDING_PX, scrMax.y + DRAG_SELECT_PADDING_PX);
+                return true;
+            }
+            // fall through to collider path if all samples were behind camera
+        }
+
+        // 2) Fallback: use collider's *horizontal footprint* (bottom face of AABB), not full 3D AABB
+        if (em.HasComponent<PhysicsCollider>(e))
+        {
+            var pc = em.GetComponentData<PhysicsCollider>(e);
             if (pc.Value.IsCreated)
             {
+                // World AABB of the collider at this pose
                 var rt = new RigidTransform(lt.Rotation, lt.Position);
                 Unity.Physics.Aabb aabb = pc.Value.Value.CalculateAabb(rt);
 
-                float3 min = aabb.Min;
-                float3 max = aabb.Max;
-
-                // 8 corners of the AABB
+                // Project only the bottom face corners (XZ footprint) to avoid “tall tree” inflation
+                float y = aabb.Min.y;
                 float3[] corners =
                 {
-                    new float3(min.x, min.y, min.z),
-                    new float3(max.x, min.y, min.z),
-                    new float3(min.x, max.y, min.z),
-                    new float3(max.x, max.y, min.z),
-                    new float3(min.x, min.y, max.z),
-                    new float3(max.x, min.y, max.z),
-                    new float3(min.x, max.y, max.z),
-                    new float3(max.x, max.y, max.z),
+                    new float3(aabb.Min.x, y, aabb.Min.z),
+                    new float3(aabb.Max.x, y, aabb.Min.z),
+                    new float3(aabb.Min.x, y, aabb.Max.z),
+                    new float3(aabb.Max.x, y, aabb.Max.z),
                 };
 
                 Vector2 scrMin = new Vector2(float.PositiveInfinity, float.PositiveInfinity);
                 Vector2 scrMax = new Vector2(float.NegativeInfinity, float.NegativeInfinity);
                 bool anyInFront = false;
 
-                for (int i = 0; i < 8; i++)
+                for (int i = 0; i < corners.Length; i++)
                 {
                     Vector3 sp = cam.WorldToScreenPoint((Vector3)corners[i]);
-                    if (sp.z <= 0f) continue; // behind camera; ignore this corner
+                    if (sp.z <= 0f) continue; // behind camera
                     anyInFront = true;
                     if (sp.x < scrMin.x) scrMin.x = sp.x;
                     if (sp.y < scrMin.y) scrMin.y = sp.y;
@@ -355,19 +393,19 @@ public class SelectionManager : MonoBehaviour
 
                 if (anyInFront)
                 {
-                    // pad a hair so grazing the edge selects
-                    rect = Rect.MinMaxRect(scrMin.x - DRAG_SELECT_PADDING_PX, scrMin.y - DRAG_SELECT_PADDING_PX,
-                                        scrMax.x + DRAG_SELECT_PADDING_PX, scrMax.y + DRAG_SELECT_PADDING_PX);
+                    rect = Rect.MinMaxRect(
+                        scrMin.x - DRAG_SELECT_PADDING_PX, scrMin.y - DRAG_SELECT_PADDING_PX,
+                        scrMax.x + DRAG_SELECT_PADDING_PX, scrMax.y + DRAG_SELECT_PADDING_PX);
                     return true;
                 }
             }
         }
 
-        // Fallback: small box around the entity’s position on screen
+        // 3) Last resort: tiny screen-space box around projected position
         Vector3 center = cam.WorldToScreenPoint((Vector3)lt.Position);
         if (center.z > 0f)
         {
-            const float fallbackRadiusPx = 10f; // tweak if needed
+            const float fallbackRadiusPx = 10f;
             rect = Rect.MinMaxRect(center.x - fallbackRadiusPx, center.y - fallbackRadiusPx,
                                 center.x + fallbackRadiusPx, center.y + fallbackRadiusPx);
             return true;
