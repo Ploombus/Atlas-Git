@@ -1,26 +1,25 @@
-using Unity.Collections;
 using Unity.Entities;
 using Unity.NetCode;
-using UnityEngine;
 using Unity.Mathematics;
-
+using Unity.Collections;
+using UnityEngine;
 
 /// <summary>
-/// Server-side system that manages unified player stats (resources + scores)
-/// Simple, modular approach combining both resource and score management
+/// FIXED: Server system that creates proper ghosted player entities
+/// Connection entities don't replicate - we need separate player entities
 /// </summary>
 [UpdateInGroup(typeof(SimulationSystemGroup))]
 [WorldSystemFilter(WorldSystemFilterFlags.ServerSimulation)]
 public partial struct ServerPlayerStatsSystem : ISystem
 {
-    private const int STARTING_RESOURCE1 = 50;
-    private const int STARTING_RESOURCE2 = 0;
+    private const int STARTING_RESOURCE1 = 100;
+    private const int STARTING_RESOURCE2 = 100;
 
     public void OnCreate(ref SystemState state)
     {
         state.RequireForUpdate<NetworkTime>();
 
-        // Create config singleton if it doesn't exist
+        // Create config entity if it doesn't exist
         if (!SystemAPI.HasSingleton<StatsConfig>())
         {
             var configEntity = state.EntityManager.CreateEntity();
@@ -33,42 +32,86 @@ public partial struct ServerPlayerStatsSystem : ISystem
         var ecb = new EntityCommandBuffer(Allocator.Temp);
         var config = SystemAPI.GetSingleton<StatsConfig>();
 
-        // Initialize stats for new players
-        InitializeNewPlayers(ref state, ecb);
+        // FIXED: Create ghosted player entities when players spawn
+        ProcessPlayerSpawning(ref state, ecb);
 
-        // Process stats change events (resource changes with optional score awards)
+        // Process stats change events
         ProcessStatsChangeEvents(ref state, ecb, config);
 
-        // Process direct score events (score without resource changes)
+        // Process direct score events
         ProcessDirectScoreEvents(ref state, ecb);
 
-        // Process resource requests from clients (for testing/cheats)
+        // Process resource addition requests
         ProcessResourceRequests(ref state, ecb);
 
         ecb.Playback(state.EntityManager);
         ecb.Dispose();
     }
 
-    private void InitializeNewPlayers(ref SystemState state, EntityCommandBuffer ecb)
+    /// <summary>
+    /// FIXED: Create a separate ghosted entity for each player's stats
+    /// This entity will replicate to all clients via Ghost system
+    /// </summary>
+    private void ProcessPlayerSpawning(ref SystemState state, EntityCommandBuffer ecb)
     {
-        foreach (var (netId, entity) in
+        foreach (var (netId, connectionEntity) in
             SystemAPI.Query<RefRO<NetworkId>>()
-            .WithNone<PlayerStats>()
-            .WithAll<NetworkStreamConnection>()
+            .WithAll<PendingPlayerSpawn>()
+            .WithNone<PlayerStatsEntity>() // Prevent duplicate creation
             .WithEntityAccess())
         {
-            // Initialize player stats
-            ecb.AddComponent(entity, new PlayerStats
+            // Create a separate ghosted entity for player stats
+            var playerStatsEntity = ecb.CreateEntity();
+
+            // Add PlayerStats component (this will replicate via Ghost)
+            ecb.AddComponent(playerStatsEntity, new PlayerStats
             {
                 resource1 = STARTING_RESOURCE1,
                 resource2 = STARTING_RESOURCE2,
                 totalScore = 0,
                 resource1Score = 0,
-                resource2Score = 0
+                resource2Score = 0,
+                playerId = netId.ValueRO.Value
             });
 
-            // Send initial sync to client
-            SyncStatsToClient(ecb, entity, STARTING_RESOURCE1, STARTING_RESOURCE2, 0, 0, 0);
+            // Make it owned by this player so it replicates
+            ecb.AddComponent(playerStatsEntity, new GhostOwner { NetworkId = netId.ValueRO.Value });
+
+            // Link the connection entity to the stats entity
+            ecb.AddComponent(connectionEntity, new PlayerStatsEntity { Entity = playerStatsEntity });
+
+            Debug.Log($"[Server DEBUG] Created PlayerStats entity {playerStatsEntity} for player {netId.ValueRO.Value} with {STARTING_RESOURCE1}/{STARTING_RESOURCE2} resources");
+        }
+
+        // DEBUG: Log all existing PlayerStats
+        LogExistingPlayerStats(ref state);
+    }
+
+    private float lastServerDebugTime;
+    private const float SERVER_DEBUG_INTERVAL = 3.0f;
+
+    private void LogExistingPlayerStats(ref SystemState state)
+    {
+        float currentTime = (float)SystemAPI.Time.ElapsedTime;
+        if (currentTime - lastServerDebugTime >= SERVER_DEBUG_INTERVAL)
+        {
+            lastServerDebugTime = currentTime;
+
+            Debug.Log("=== Server PlayerStats Debug ===");
+            int statsCount = 0;
+
+            foreach (var (stats, entity) in
+                SystemAPI.Query<RefRO<PlayerStats>>()
+                .WithEntityAccess())
+            {
+                statsCount++;
+                Debug.Log($"[Server DEBUG] PlayerStats {statsCount}: PlayerId:{stats.ValueRO.playerId} R1:{stats.ValueRO.resource1} R2:{stats.ValueRO.resource2} Score:{stats.ValueRO.totalScore} Entity:{entity}");
+            }
+
+            if (statsCount == 0)
+            {
+                Debug.LogWarning("[Server DEBUG] NO PlayerStats found on server!");
+            }
         }
     }
 
@@ -80,27 +123,26 @@ public partial struct ServerPlayerStatsSystem : ISystem
         {
             var playerConnection = changeEvent.ValueRO.playerConnection;
 
-            // Validate player connection
-            if (!state.EntityManager.Exists(playerConnection) ||
-                !SystemAPI.HasComponent<PlayerStats>(playerConnection))
+            // FIXED: Find the stats entity linked to this connection
+            var playerStatsEntity = FindPlayerStatsEntity(ref state, playerConnection);
+            if (playerStatsEntity == Entity.Null)
             {
+                Debug.LogWarning($"No PlayerStats entity found for connection {playerConnection}");
                 ecb.DestroyEntity(eventEntity);
                 continue;
             }
 
-            var stats = SystemAPI.GetComponent<PlayerStats>(playerConnection);
+            var stats = state.EntityManager.GetComponentData<PlayerStats>(playerStatsEntity);
             int resource1Delta = changeEvent.ValueRO.resource1Delta;
             int resource2Delta = changeEvent.ValueRO.resource2Delta;
 
             // Update resources
             stats.resource1 += resource1Delta;
             stats.resource2 += resource2Delta;
-
-            // Ensure resources don't go negative
             stats.resource1 = math.max(0, stats.resource1);
             stats.resource2 = math.max(0, stats.resource2);
 
-            // Award score points if specified (typically for resource gains)
+            // Award score points if specified
             if (changeEvent.ValueRO.awardScorePoints)
             {
                 int scoreIncrease = 0;
@@ -127,15 +169,8 @@ public partial struct ServerPlayerStatsSystem : ISystem
                 }
             }
 
-            // Update the component
-            ecb.SetComponent(playerConnection, stats);
-
-            // Sync to client
-            SyncStatsToClient(ecb, playerConnection,
-                stats.resource1, stats.resource2,
-                stats.totalScore, stats.resource1Score, stats.resource2Score);
-
-            // Clean up event
+            // Update the stats entity - Ghost system handles replication
+            ecb.SetComponent(playerStatsEntity, stats);
             ecb.DestroyEntity(eventEntity);
         }
     }
@@ -148,23 +183,19 @@ public partial struct ServerPlayerStatsSystem : ISystem
         {
             var playerConnection = scoreEvent.ValueRO.playerConnection;
 
-            if (!state.EntityManager.Exists(playerConnection) ||
-                !SystemAPI.HasComponent<PlayerStats>(playerConnection))
+            // FIXED: Find the stats entity linked to this connection
+            var playerStatsEntity = FindPlayerStatsEntity(ref state, playerConnection);
+            if (playerStatsEntity == Entity.Null)
             {
                 ecb.DestroyEntity(eventEntity);
                 continue;
             }
 
-            var stats = SystemAPI.GetComponent<PlayerStats>(playerConnection);
+            var stats = state.EntityManager.GetComponentData<PlayerStats>(playerStatsEntity);
             stats.totalScore += scoreEvent.ValueRO.scorePoints;
 
-            ecb.SetComponent(playerConnection, stats);
-
-            // Sync to client
-            SyncStatsToClient(ecb, playerConnection,
-                stats.resource1, stats.resource2,
-                stats.totalScore, stats.resource1Score, stats.resource2Score);
-
+            // Update the stats entity - Ghost system handles replication
+            ecb.SetComponent(playerStatsEntity, stats);
             ecb.DestroyEntity(eventEntity);
         }
     }
@@ -177,35 +208,100 @@ public partial struct ServerPlayerStatsSystem : ISystem
         {
             var connection = receiveRequest.ValueRO.SourceConnection;
 
-            if (SystemAPI.HasComponent<PlayerStats>(connection))
+            if (FindPlayerStatsEntity(ref state, connection) != Entity.Null)
             {
-                // Create a stats change event for this request
                 TriggerStatsChange(ecb, connection,
                     request.ValueRO.resource1ToAdd,
                     request.ValueRO.resource2ToAdd,
-                    awardScorePoints: true); // Award points for manually added resources
+                    awardScorePoints: true);
             }
 
             ecb.DestroyEntity(rpcEntity);
         }
     }
 
-    private static void SyncStatsToClient(EntityCommandBuffer ecb, Entity playerConnection,
-        int resource1, int resource2, int totalScore, int resource1Score, int resource2Score)
+    /// <summary>
+    /// FIXED: Find the PlayerStats entity linked to a connection
+    /// </summary>
+    private Entity FindPlayerStatsEntity(ref SystemState state, Entity connectionEntity)
     {
-        var syncRpc = ecb.CreateEntity();
-        ecb.AddComponent(syncRpc, new SyncPlayerStatsRpc
+        if (state.EntityManager.HasComponent<PlayerStatsEntity>(connectionEntity))
         {
-            resource1 = resource1,
-            resource2 = resource2,
-            totalScore = totalScore,
-            resource1Score = resource1Score,
-            resource2Score = resource2Score
-        });
-        ecb.AddComponent(syncRpc, new SendRpcCommandRequest { TargetConnection = playerConnection });
+            return state.EntityManager.GetComponentData<PlayerStatsEntity>(connectionEntity).Entity;
+        }
+        return Entity.Null;
     }
 
-    // Public utility methods for other systems to use
+    /// <summary>
+    /// FIXED: Helper method to find player connection entity by NetworkId
+    /// </summary>
+    public static Entity FindPlayerConnectionByNetworkId(ref SystemState state, int networkId)
+    {
+        var entityManager = state.EntityManager;
+
+        using var query = entityManager.CreateEntityQuery(
+            ComponentType.ReadOnly<NetworkId>(),
+            ComponentType.ReadOnly<NetworkStreamConnection>(),
+            ComponentType.ReadOnly<PlayerStatsEntity>()
+        );
+
+        var entities = query.ToEntityArray(Unity.Collections.Allocator.Temp);
+        var networkIds = query.ToComponentDataArray<NetworkId>(Unity.Collections.Allocator.Temp);
+
+        Entity result = Entity.Null;
+        for (int i = 0; i < networkIds.Length; i++)
+        {
+            if (networkIds[i].Value == networkId)
+            {
+                result = entities[i];
+                break;
+            }
+        }
+
+        entities.Dispose();
+        networkIds.Dispose();
+        return result;
+    }
+
+    public static bool TrySpendResources(ref SystemState state, EntityCommandBuffer ecb,
+        Entity playerConnection, int resource1Cost, int resource2Cost)
+    {
+        // FIXED: Find PlayerStats entity directly without system reference
+        Entity playerStatsEntity = Entity.Null;
+
+        if (state.EntityManager.HasComponent<PlayerStatsEntity>(playerConnection))
+        {
+            playerStatsEntity = state.EntityManager.GetComponentData<PlayerStatsEntity>(playerConnection).Entity;
+        }
+
+        if (playerStatsEntity == Entity.Null)
+        {
+            Debug.LogWarning($"TrySpendResources: No PlayerStats entity found for connection {playerConnection}");
+            return false;
+        }
+
+        if (!state.EntityManager.HasComponent<PlayerStats>(playerStatsEntity))
+        {
+            Debug.LogWarning($"TrySpendResources: PlayerStats entity {playerStatsEntity} missing PlayerStats component");
+            return false;
+        }
+
+        var stats = state.EntityManager.GetComponentData<PlayerStats>(playerStatsEntity);
+
+        Debug.Log($"TrySpendResources: Player {stats.playerId} has {stats.resource1}/{stats.resource2} resources, needs {resource1Cost}/{resource2Cost}");
+
+        if (stats.resource1 >= resource1Cost && stats.resource2 >= resource2Cost)
+        {
+            TriggerStatsChange(ecb, playerConnection, -resource1Cost, -resource2Cost, false);
+            Debug.Log($"TrySpendResources: SUCCESS - Spending {resource1Cost}/{resource2Cost} resources");
+            return true;
+        }
+
+        Debug.Log($"TrySpendResources: FAILED - Insufficient resources");
+        return false;
+    }
+
+    // Public utility methods
     public static void TriggerStatsChange(EntityCommandBuffer ecb, Entity playerConnection,
         int resource1Delta, int resource2Delta, bool awardScorePoints = false)
     {
@@ -223,47 +319,22 @@ public partial struct ServerPlayerStatsSystem : ISystem
     }
 
     public static void AwardDirectScore(EntityCommandBuffer ecb, Entity playerConnection,
-        int scorePoints, ScoreReason reason = ScoreReason.Custom)
+        int scorePoints, ScoreReason reason)
     {
-        if (scorePoints != 0)
+        var eventEntity = ecb.CreateEntity();
+        ecb.AddComponent(eventEntity, new DirectScoreEvent
         {
-            var eventEntity = ecb.CreateEntity();
-            ecb.AddComponent(eventEntity, new DirectScoreEvent
-            {
-                scorePoints = scorePoints,
-                playerConnection = playerConnection,
-                reason = reason
-            });
-        }
+            scorePoints = scorePoints,
+            playerConnection = playerConnection,
+            reason = reason
+        });
     }
+}
 
-    public static bool TrySpendResources(ref SystemState state, EntityCommandBuffer ecb,
-        Entity connectionEntity, int resource1Cost, int resource2Cost)
-    {
-        if (!state.EntityManager.HasComponent<PlayerStats>(connectionEntity))
-            return false;
-
-        var stats = state.EntityManager.GetComponentData<PlayerStats>(connectionEntity);
-
-        if (stats.resource1 >= resource1Cost && stats.resource2 >= resource2Cost)
-        {
-            // Spend resources (negative delta, no score award)
-            TriggerStatsChange(ecb, connectionEntity, -resource1Cost, -resource2Cost, awardScorePoints: false);
-            return true;
-        }
-
-        return false;
-    }
-
-    public static bool TryGetPlayerStats(ref SystemState state, Entity connectionEntity, out PlayerStats stats)
-    {
-        if (state.EntityManager.HasComponent<PlayerStats>(connectionEntity))
-        {
-            stats = state.EntityManager.GetComponentData<PlayerStats>(connectionEntity);
-            return true;
-        }
-
-        stats = default;
-        return false;
-    }
+/// <summary>
+/// NEW: Component to link connection entities to their PlayerStats entities
+/// </summary>
+public struct PlayerStatsEntity : IComponentData
+{
+    public Entity Entity;
 }

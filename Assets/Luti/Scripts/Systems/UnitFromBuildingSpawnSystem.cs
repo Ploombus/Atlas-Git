@@ -76,8 +76,18 @@ public partial struct UnitFromBuildingSpawnSystem : ISystem
                     if (spawnCost.unitResource1Cost > 0 || spawnCost.unitResource2Cost > 0)
                     {
                         // Try to spend resources using the helper method
+                        Entity playerConnectionEntity = ServerPlayerStatsSystem.FindPlayerConnectionByNetworkId(ref state, requesterNetId);
+
+                        if (playerConnectionEntity == Entity.Null)
+                        {
+                            Debug.LogWarning($"Player {requesterNetId} connection not found or no PlayerStats");
+                            buffer.DestroyEntity(rpcEntity);
+                            continue;
+                        }
+
+                        // Try to spend resources using the correct player connection entity
                         if (!ServerPlayerStatsSystem.TrySpendResources(ref state, buffer,
-                            connection, spawnCost.unitResource1Cost, spawnCost.unitResource2Cost))
+                            playerConnectionEntity, spawnCost.unitResource1Cost, spawnCost.unitResource2Cost))
                         {
                             Debug.Log($"Player {requesterNetId} cannot afford unit. Cost: R1:{spawnCost.unitResource1Cost}/R2:{spawnCost.unitResource2Cost}");
                             buffer.DestroyEntity(rpcEntity);

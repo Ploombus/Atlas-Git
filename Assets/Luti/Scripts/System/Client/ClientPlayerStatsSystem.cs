@@ -1,202 +1,176 @@
 using Unity.Entities;
 using Unity.NetCode;
+using Unity.Collections;
 using UnityEngine;
 
 /// <summary>
-/// Client-side system that receives unified player stats from server
-/// Updates both resource manager and scoreboard UI
+/// DEBUG VERSION: Client system with extensive logging to trace data flow
 /// </summary>
 [UpdateInGroup(typeof(SimulationSystemGroup))]
 [WorldSystemFilter(WorldSystemFilterFlags.ClientSimulation)]
 public partial struct ClientPlayerStatsSystem : ISystem
 {
-    private Entity statsDataEntity;
-
-    public void OnCreate(ref SystemState state)
-    {
-        // Create singleton entity to store current stats data for UI access
-        statsDataEntity = state.EntityManager.CreateEntity();
-        state.EntityManager.AddComponentData(statsDataEntity, new CurrentPlayerStatsData
-        {
-            resource1 = 0,
-            resource2 = 0,
-            totalScore = 0,
-            resource1Score = 0,
-            resource2Score = 0,
-            hasValidData = false
-        });
-        state.EntityManager.AddComponent<CurrentPlayerStatsDataSingleton>(statsDataEntity);
-    }
+    private float lastDebugTime;
+    private const float DEBUG_INTERVAL = 2.0f;
 
     public void OnUpdate(ref SystemState state)
     {
-        var ecb = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
         var resourceManager = ResourceManager.Instance;
+        float currentTime = (float)SystemAPI.Time.ElapsedTime;
 
-        // Process unified stats sync RPCs from server
-        foreach (var (statsRpc, rpcEntity) in
-            SystemAPI.Query<RefRO<SyncPlayerStatsRpc>>()
-            .WithAll<ReceiveRpcCommandRequest>()
-            .WithEntityAccess())
+        // Debug logging every 2 seconds
+        bool shouldDebug = currentTime - lastDebugTime >= DEBUG_INTERVAL;
+        if (shouldDebug)
         {
-            var newResource1 = statsRpc.ValueRO.resource1;
-            var newResource2 = statsRpc.ValueRO.resource2;
-            var totalScore = statsRpc.ValueRO.totalScore;
-            var resource1Score = statsRpc.ValueRO.resource1Score;
-            var resource2Score = statsRpc.ValueRO.resource2Score;
+            lastDebugTime = currentTime;
+            Debug.Log("=== ClientPlayerStatsSystem Debug ===");
 
-            // Update ResourceManager if it exists (backwards compatibility)
-            if (resourceManager != null)
+            if (resourceManager == null)
             {
-                int currentR1 = resourceManager.GetResourceAmount(ResourceManager.ResourceType.Resource1);
-                int currentR2 = resourceManager.GetResourceAmount(ResourceManager.ResourceType.Resource2);
-
-                if (currentR1 != newResource1)
-                {
-                    int diff = newResource1 - currentR1;
-                    if (diff > 0)
-                        resourceManager.AddResource(ResourceManager.ResourceType.Resource1, diff);
-                    else
-                        resourceManager.RemoveResource(ResourceManager.ResourceType.Resource1, -diff);
-                }
-
-                if (currentR2 != newResource2)
-                {
-                    int diff = newResource2 - currentR2;
-                    if (diff > 0)
-                        resourceManager.AddResource(ResourceManager.ResourceType.Resource2, diff);
-                    else
-                        resourceManager.RemoveResource(ResourceManager.ResourceType.Resource2, -diff);
-                }
+                Debug.LogError("[Client DEBUG] ResourceManager.Instance is NULL!");
             }
-
-            // Update singleton data for UI access
-            var statsData = new CurrentPlayerStatsData
+            else
             {
-                resource1 = newResource1,
-                resource2 = newResource2,
-                totalScore = totalScore,
-                resource1Score = resource1Score,
-                resource2Score = resource2Score,
-                hasValidData = true
-            };
-
-            state.EntityManager.SetComponentData(statsDataEntity, statsData);
-
-            // Update scoreboard manager if it exists
-            var scoreboardManager = ScoreboardManager.Instance;
-            if (scoreboardManager != null)
-            {
-                scoreboardManager.UpdateLocalPlayerStats(totalScore, resource1Score, resource2Score,
-                    newResource1, newResource2);
+                Debug.Log($"[Client DEBUG] ResourceManager: R1:{resourceManager.GetResourceAmount(ResourceManager.ResourceType.Resource1)} R2:{resourceManager.GetResourceAmount(ResourceManager.ResourceType.Resource2)}");
             }
-
-            // Fire static events for loose coupling
-            PlayerStatsUIEvents.OnLocalStatsChanged?.Invoke(newResource1, newResource2,
-                totalScore, resource1Score, resource2Score);
-
-            ecb.DestroyEntity(rpcEntity);
         }
 
-        // Process resource refund RPCs (maintain backward compatibility)
-        foreach (var (refund, rpcEntity) in
-            SystemAPI.Query<RefRO<ResourceRefundRpc>>()
-            .WithAll<ReceiveRpcCommandRequest>()
-            .WithEntityAccess())
-        {
-            if (resourceManager != null)
-            {
-                resourceManager.AddResource(ResourceManager.ResourceType.Resource1, refund.ValueRO.resource1Amount);
-                resourceManager.AddResource(ResourceManager.ResourceType.Resource2, refund.ValueRO.resource2Amount);
-            }
+        // Get local player network ID first
+        int localPlayerNetworkId = GetLocalPlayerNetworkId(ref state);
 
-            Debug.Log($"[Client] Resources refunded: R1:{refund.ValueRO.resource1Amount}, R2:{refund.ValueRO.resource2Amount}");
-            ecb.DestroyEntity(rpcEntity);
+        if (localPlayerNetworkId == -1)
+        {
+            if (shouldDebug) Debug.LogWarning("[Client DEBUG] No local player network ID found");
+            return;
         }
 
-        ecb.Playback(state.EntityManager);
-        ecb.Dispose();
+        if (shouldDebug) Debug.Log($"[Client DEBUG] Local player network ID: {localPlayerNetworkId}");
+
+        // Count all PlayerStats components
+        int playerStatsCount = 0;
+        bool hasLocalPlayerUpdate = false;
+        PlayerStats localPlayerStats = default;
+
+        // Query ALL entities with PlayerStats (not just NetworkStreamConnection)
+        foreach (var (stats, entity) in
+            SystemAPI.Query<RefRO<PlayerStats>>()
+            .WithEntityAccess())
+        {
+            playerStatsCount++;
+
+            if (shouldDebug)
+            {
+                Debug.Log($"[Client DEBUG] Found PlayerStats - PlayerId:{stats.ValueRO.playerId} R1:{stats.ValueRO.resource1} R2:{stats.ValueRO.resource2} Score:{stats.ValueRO.totalScore}");
+            }
+
+            // Check if this is our local player
+            if (stats.ValueRO.playerId == localPlayerNetworkId)
+            {
+                localPlayerStats = stats.ValueRO;
+                hasLocalPlayerUpdate = true;
+
+                if (shouldDebug) Debug.Log($"[Client DEBUG] FOUND LOCAL PLAYER STATS!");
+
+                // Update ResourceManager using existing methods
+                if (resourceManager != null)
+                {
+                    SyncResourceManager(resourceManager, stats.ValueRO.resource1, stats.ValueRO.resource2);
+                    if (shouldDebug) Debug.Log($"[Client DEBUG] Updated ResourceManager to R1:{stats.ValueRO.resource1} R2:{stats.ValueRO.resource2}");
+                }
+                else
+                {
+                    Debug.LogError("[Client DEBUG] ResourceManager is null, cannot sync!");
+                }
+            }
+        }
+
+        if (shouldDebug)
+        {
+            Debug.Log($"[Client DEBUG] Total PlayerStats found: {playerStatsCount}");
+            Debug.Log($"[Client DEBUG] Has local player update: {hasLocalPlayerUpdate}");
+        }
+
+        // If we found local player stats, trigger UI updates
+        if (hasLocalPlayerUpdate)
+        {
+            // Trigger local player UI update
+            PlayerStatsUIEvents.OnLocalStatsChanged?.Invoke(
+                localPlayerStats.resource1, localPlayerStats.resource2,
+                localPlayerStats.totalScore, localPlayerStats.resource1Score, localPlayerStats.resource2Score);
+
+            // Trigger general stats update for scoreboard
+            PlayerStatsUIEvents.OnAllPlayerStatsUpdated?.Invoke();
+
+            if (shouldDebug) Debug.Log($"[Client DEBUG] Triggered UI events");
+        }
+    }
+
+    /// <summary>
+    /// Get local player network ID using the same pattern as existing code
+    /// </summary>
+    private int GetLocalPlayerNetworkId(ref SystemState state)
+    {
+        // First try to find using GhostOwnerIsLocal (preferred method)
+        foreach (var (ghostOwner, entity) in
+            SystemAPI.Query<RefRO<GhostOwner>>()
+            .WithAll<GhostOwnerIsLocal>()
+            .WithEntityAccess())
+        {
+            return ghostOwner.ValueRO.NetworkId;
+        }
+
+        // Fallback: find the first NetworkStreamConnection (client connection)
+        foreach (var (netId, entity) in
+            SystemAPI.Query<RefRO<NetworkId>>()
+            .WithAll<NetworkStreamConnection>()
+            .WithEntityAccess())
+        {
+            return netId.ValueRO.Value;
+        }
+
+        return -1; // No local player found
+    }
+
+    /// <summary>
+    /// Sync ResourceManager using existing AddResource/RemoveResource methods
+    /// </summary>
+    private void SyncResourceManager(ResourceManager resourceManager, int targetResource1, int targetResource2)
+    {
+        // Get current amounts
+        int currentR1 = resourceManager.GetResourceAmount(ResourceManager.ResourceType.Resource1);
+        int currentR2 = resourceManager.GetResourceAmount(ResourceManager.ResourceType.Resource2);
+
+        // Sync Resource1
+        if (currentR1 != targetResource1)
+        {
+            int diff = targetResource1 - currentR1;
+            if (diff > 0)
+                resourceManager.AddResource(ResourceManager.ResourceType.Resource1, diff);
+            else if (diff < 0)
+                resourceManager.RemoveResource(ResourceManager.ResourceType.Resource1, -diff);
+
+            Debug.Log($"[Client DEBUG] Synced R1: {currentR1} -> {targetResource1} (diff: {diff})");
+        }
+
+        // Sync Resource2
+        if (currentR2 != targetResource2)
+        {
+            int diff = targetResource2 - currentR2;
+            if (diff > 0)
+                resourceManager.AddResource(ResourceManager.ResourceType.Resource2, diff);
+            else if (diff < 0)
+                resourceManager.RemoveResource(ResourceManager.ResourceType.Resource2, -diff);
+
+            Debug.Log($"[Client DEBUG] Synced R2: {currentR2} -> {targetResource2} (diff: {diff})");
+        }
     }
 }
 
 /// <summary>
-/// Singleton component to store current player stats for UI access
-/// </summary>
-public struct CurrentPlayerStatsData : IComponentData
-{
-    public int resource1;
-    public int resource2;
-    public int totalScore;
-    public int resource1Score;
-    public int resource2Score;
-    public bool hasValidData;
-}
-
-/// <summary>
-/// Tag component to mark the singleton entity
-/// </summary>
-public struct CurrentPlayerStatsDataSingleton : IComponentData { }
-
-/// <summary>
-/// Static events for UI communication - unified approach
+/// Static events for UI communication
 /// </summary>
 public static class PlayerStatsUIEvents
 {
-    public static System.Action OnStatsUpdated;
     public static System.Action<int, int, int, int, int> OnLocalStatsChanged; // r1, r2, totalScore, r1Score, r2Score
-    public static System.Action<int, int, int, int, int, int> OnPlayerStatsChanged; // playerId, r1, r2, totalScore, r1Score, r2Score
-}
-
-/// <summary>
-/// Unified query utilities for UI systems
-/// </summary>
-public static class PlayerStatsQueryUtils
-{
-    public static bool TryGetLocalPlayerStats(World clientWorld,
-        out int resource1, out int resource2,
-        out int totalScore, out int resource1Score, out int resource2Score)
-    {
-        resource1 = resource2 = totalScore = resource1Score = resource2Score = 0;
-
-        if (clientWorld == null || !clientWorld.IsCreated) return false;
-
-        var entityManager = clientWorld.EntityManager;
-
-        using var query = entityManager.CreateEntityQuery(
-            ComponentType.ReadOnly<CurrentPlayerStatsData>(),
-            ComponentType.ReadOnly<CurrentPlayerStatsDataSingleton>()
-        );
-
-        if (query.CalculateEntityCount() == 0) return false;
-
-        var statsData = query.GetSingleton<CurrentPlayerStatsData>();
-
-        if (!statsData.hasValidData) return false;
-
-        resource1 = statsData.resource1;
-        resource2 = statsData.resource2;
-        totalScore = statsData.totalScore;
-        resource1Score = statsData.resource1Score;
-        resource2Score = statsData.resource2Score;
-
-        return true;
-    }
-
-    public static CurrentPlayerStatsData GetCurrentPlayerStats(World clientWorld)
-    {
-        if (clientWorld == null || !clientWorld.IsCreated)
-            return new CurrentPlayerStatsData { hasValidData = false };
-
-        var entityManager = clientWorld.EntityManager;
-
-        using var query = entityManager.CreateEntityQuery(
-            ComponentType.ReadOnly<CurrentPlayerStatsData>(),
-            ComponentType.ReadOnly<CurrentPlayerStatsDataSingleton>()
-        );
-
-        if (query.CalculateEntityCount() == 0)
-            return new CurrentPlayerStatsData { hasValidData = false };
-
-        return query.GetSingleton<CurrentPlayerStatsData>();
-    }
+    public static System.Action OnAllPlayerStatsUpdated; // Signals scoreboard to refresh
 }

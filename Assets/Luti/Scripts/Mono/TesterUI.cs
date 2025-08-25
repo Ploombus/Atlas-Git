@@ -18,8 +18,6 @@ public class TesterUI : MonoBehaviour
 
     // UI Elements
     private VisualElement root;
-    private IntegerField counter1Amount;
-    private IntegerField counter2Amount;
     private IntegerField resource1Input;
     private IntegerField resource2Input;
     private Button spawnerButton;
@@ -50,8 +48,6 @@ public class TesterUI : MonoBehaviour
         // Subscribe to events
         SubscribeToEvents();
 
-        // Subscribe to ResourceManager events
-        resourceManager.OnResourceChanged += UpdateResourceCounter;
     }
 
     private void InitializeUIElements()
@@ -63,9 +59,6 @@ public class TesterUI : MonoBehaviour
         addResource2Button = root.Q<Button>("AddResource2");
         resource1Input = root.Q<IntegerField>("Resource1Input");
         resource2Input = root.Q<IntegerField>("Resource2Input");
-
-        counter1Amount = root.Q<IntegerField>("Counter1Amount");
-        counter2Amount = root.Q<IntegerField>("Counter2Amount");
 
         addResource1Button.RegisterCallback<ClickEvent>(AddResource1Amount);
         addResource2Button.RegisterCallback<ClickEvent>(AddResource2Amount);
@@ -98,10 +91,7 @@ public class TesterUI : MonoBehaviour
         BuildingUIEvents.OnResourcesUpdated -= HandleResourcesUpdated;
         BuildingUIEvents.OnSpawnValidated -= HandleSpawnValidation;
 
-        if (resourceManager != null)
-        {
-            resourceManager.OnResourceChanged -= UpdateResourceCounter;
-        }
+
     }
 
     // Event Handlers
@@ -274,18 +264,7 @@ public class TesterUI : MonoBehaviour
         resourceManager.AddResource(ResourceManager.ResourceType.Resource2, resource2Input.value);
     }
 
-    private void UpdateResourceCounter(ResourceManager.ResourceType type, int newAmount)
-    {
-        switch (type)
-        {
-            case ResourceManager.ResourceType.Resource1:
-                counter1Amount.value = newAmount;
-                break;
-            case ResourceManager.ResourceType.Resource2:
-                counter2Amount.value = newAmount;
-                break;
-        }
-    }
+
 
     private void OnSpawnUnitClicked(ClickEvent evt)
     {

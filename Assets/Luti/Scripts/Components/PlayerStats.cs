@@ -1,11 +1,15 @@
 using Unity.Entities;
 using Unity.NetCode;
 
+using Unity.Entities;
+using Unity.NetCode;
+
 /// <summary>
-/// Unified component that tracks both resources and scores for a player
-/// Server-authoritative with automatic score calculation
+/// FIXED: Now replicates to all clients for cross-player visibility
+/// Simple Ghost component approach - server authoritative, visible to all
+/// FIXED: Removed problematic SendToOwner parameter - using default behavior
 /// </summary>
-[GhostComponent(PrefabType = GhostPrefabType.Server)]
+[GhostComponent(PrefabType = GhostPrefabType.All)]
 public struct PlayerStats : IComponentData
 {
     // Current resources
@@ -17,12 +21,15 @@ public struct PlayerStats : IComponentData
     [GhostField] public int resource1Score;
     [GhostField] public int resource2Score;
 
+    // Player identifier for display
+    [GhostField] public int playerId;
+
     // For display purposes - shows current resources in scoreboard
     public int CurrentResource1 => resource1;
     public int CurrentResource2 => resource2;
 }
 
-
+// Keep existing RPCs for backward compatibility if needed
 public struct SyncResourcesRpc : IRpcCommand
 {
     public int resource1;
@@ -33,18 +40,6 @@ public struct AddResourcesRpc : IRpcCommand
 {
     public int resource1ToAdd;
     public int resource2ToAdd;
-}
-
-/// <summary>
-/// Single RPC for syncing all player stats to client
-/// </summary>
-public struct SyncPlayerStatsRpc : IRpcCommand
-{
-    public int resource1;
-    public int resource2;
-    public int totalScore;
-    public int resource1Score;
-    public int resource2Score;
 }
 
 /// <summary>

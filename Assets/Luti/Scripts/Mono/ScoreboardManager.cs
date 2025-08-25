@@ -3,10 +3,11 @@ using Unity.Entities;
 using Unity.NetCode;
 using UnityEngine;
 using UnityEngine.UIElements;
+using Unity.Collections;
 
 /// <summary>
-/// Enhanced ScoreboardManager that displays both resources and scores
-/// Works with the unified PlayerStats system
+/// SIMPLIFIED: ScoreboardManager that reads Ghost-replicated PlayerStats directly
+/// No complex caching or event handling - just reads from ECS when needed
 /// </summary>
 public class ScoreboardManager : MonoBehaviour
 {
@@ -18,7 +19,7 @@ public class ScoreboardManager : MonoBehaviour
     [Header("Settings")]
     [SerializeField] private bool showScoreboard = true;
     [SerializeField] private float updateInterval = 0.5f;
-    [SerializeField] private bool showResourcesInScoreboard = true; // New option
+    [SerializeField] private bool showResourcesInScoreboard = true;
 
     // UI Elements
     private VisualElement scoreboardContainer;
@@ -26,15 +27,11 @@ public class ScoreboardManager : MonoBehaviour
     private Label localTotalScore;
     private Label localResource1Score;
     private Label localResource2Score;
-    private Label localResource1Current; // New - shows current resources
-    private Label localResource2Current; // New - shows current resources
+    private Label localResource1Current;
+    private Label localResource2Current;
 
-    // Data tracking
-    private Dictionary<int, PlayerStatsData> playerStats = new Dictionary<int, PlayerStatsData>();
-    private PlayerStatsData localPlayerStats;
+    // Simple tracking
     private float lastUpdateTime;
-
-    // ECS World reference
     private World clientWorld;
 
     private void Awake()
@@ -54,14 +51,13 @@ public class ScoreboardManager : MonoBehaviour
         InitializeUI();
         FindClientWorld();
 
-        // Subscribe to unified stats events
-        PlayerStatsUIEvents.OnLocalStatsChanged += OnLocalStatsChanged;
+        // SIMPLIFIED: Only listen to the general update event
+        PlayerStatsUIEvents.OnAllPlayerStatsUpdated += ForceUpdateDisplay;
     }
 
     private void OnDestroy()
     {
-        PlayerStatsUIEvents.OnLocalStatsChanged -= OnLocalStatsChanged;
-        playerStats?.Clear();
+        PlayerStatsUIEvents.OnAllPlayerStatsUpdated -= ForceUpdateDisplay;
 
         if (Instance == this)
         {
@@ -80,6 +76,11 @@ public class ScoreboardManager : MonoBehaviour
         }
     }
 
+    private void ForceUpdateDisplay()
+    {
+        UpdateStatsDisplay();
+    }
+
     private void InitializeUI()
     {
         if (uiDocument == null)
@@ -89,17 +90,11 @@ public class ScoreboardManager : MonoBehaviour
         }
 
         var root = uiDocument.rootVisualElement;
-
-        // Get main UI elements
         scoreboardContainer = root.Q<VisualElement>("scoreboard-container");
         scoresContainer = root.Q<VisualElement>("scores-container");
-
-        // Get local player elements
         localTotalScore = root.Q<Label>("local-total-score");
         localResource1Score = root.Q<Label>("local-resource1-score");
         localResource2Score = root.Q<Label>("local-resource2-score");
-
-        // Get current resource elements (if they exist in UI)
         localResource1Current = root.Q<Label>("local-resource1-current");
         localResource2Current = root.Q<Label>("local-resource2-current");
 
@@ -110,7 +105,6 @@ public class ScoreboardManager : MonoBehaviour
         }
 
         SetScoreboardVisibility(showScoreboard);
-        Debug.Log("ScoreboardManager: UI initialized successfully");
     }
 
     private void FindClientWorld()
@@ -120,49 +114,124 @@ public class ScoreboardManager : MonoBehaviour
             if (world.IsClient())
             {
                 clientWorld = world;
-                Debug.Log($"ScoreboardManager: Found client world - {world.Name}");
                 break;
             }
         }
-
-        if (clientWorld == null)
-        {
-            Debug.LogWarning("ScoreboardManager: No client world found!");
-        }
     }
 
+    /// <summary>
+    /// SIMPLIFIED: Direct ECS query approach - reads all PlayerStats from Ghost components
+    /// </summary>
     private void UpdateStatsDisplay()
     {
         if (clientWorld == null || !clientWorld.IsCreated) return;
 
-        // Get local player stats from ECS
-        if (PlayerStatsQueryUtils.TryGetLocalPlayerStats(clientWorld,
-            out int resource1, out int resource2,
-            out int totalScore, out int resource1Score, out int resource2Score))
-        {
-            UpdateLocalPlayerStats(totalScore, resource1Score, resource2Score, resource1, resource2);
-        }
+        var entityManager = clientWorld.EntityManager;
 
-        // Clear and rebuild scoreboard
+        // Clear scoreboard
         scoresContainer?.Clear();
 
-        // Add local player first
-        if (localPlayerStats.hasValidData)
+        // SIMPLIFIED: Direct query for all PlayerStats
+        using var query = entityManager.CreateEntityQuery(
+            ComponentType.ReadOnly<PlayerStats>(),
+            ComponentType.ReadOnly<NetworkId>()
+        );
+
+        if (query.IsEmpty) return;
+
+        var allStats = query.ToComponentDataArray<PlayerStats>(Allocator.Temp);
+        var allNetIds = query.ToComponentDataArray<NetworkId>(Allocator.Temp);
+        var localPlayerId = GetLocalPlayerId();
+
+        // Create a simple list and sort by score
+        var playerDisplayData = new List<(PlayerStats stats, bool isLocal)>();
+
+        for (int i = 0; i < allStats.Length; i++)
         {
-            CreatePlayerStatsEntry("You", localPlayerStats, isLocalPlayer: true);
+            var stats = allStats[i];
+            bool isLocal = (stats.playerId == localPlayerId);
+
+            // Update local player UI elements if this is local player
+            if (isLocal)
+            {
+                UpdateLocalPlayerUI(stats);
+            }
+
+            playerDisplayData.Add((stats, isLocal));
         }
 
-        // Add other players
-        foreach (var kvp in playerStats)
+        // Sort by total score (descending)
+        playerDisplayData.Sort((a, b) => b.stats.totalScore.CompareTo(a.stats.totalScore));
+
+        // Create UI entries
+        foreach (var (stats, isLocal) in playerDisplayData)
         {
-            if (kvp.Value.hasValidData)
-            {
-                CreatePlayerStatsEntry($"Player {kvp.Key}", kvp.Value, isLocalPlayer: false);
-            }
+            CreatePlayerStatsEntry(
+                isLocal ? "You" : $"Player {stats.playerId}",
+                stats,
+                isLocal
+            );
         }
+
+        allStats.Dispose();
+        allNetIds.Dispose();
     }
 
-    private void CreatePlayerStatsEntry(string playerName, PlayerStatsData statsData, bool isLocalPlayer)
+    private void UpdateLocalPlayerUI(PlayerStats stats)
+    {
+        if (localTotalScore != null) localTotalScore.text = stats.totalScore.ToString();
+        if (localResource1Score != null) localResource1Score.text = $"R1: {stats.resource1Score}";
+        if (localResource2Score != null) localResource2Score.text = $"R2: {stats.resource2Score}";
+        if (localResource1Current != null) localResource1Current.text = stats.resource1.ToString();
+        if (localResource2Current != null) localResource2Current.text = stats.resource2.ToString();
+    }
+
+    private int GetLocalPlayerId()
+    {
+        if (clientWorld == null || !clientWorld.IsCreated) return -1;
+
+        var entityManager = clientWorld.EntityManager;
+
+        // First try to find using GhostOwnerIsLocal (preferred method)
+        using var ghostOwnerQuery = entityManager.CreateEntityQuery(
+            ComponentType.ReadOnly<GhostOwner>(),
+            ComponentType.ReadOnly<GhostOwnerIsLocal>()
+        );
+
+        if (!ghostOwnerQuery.IsEmpty)
+        {
+            var ghostOwners = ghostOwnerQuery.ToComponentDataArray<GhostOwner>(Allocator.Temp);
+            if (ghostOwners.Length > 0)
+            {
+                int localId = ghostOwners[0].NetworkId;
+                ghostOwners.Dispose();
+                return localId;
+            }
+            ghostOwners.Dispose();
+        }
+
+        // Fallback: find the first NetworkStreamConnection (client connection)
+        using var connectionQuery = entityManager.CreateEntityQuery(
+            ComponentType.ReadOnly<NetworkStreamConnection>(),
+            ComponentType.ReadOnly<NetworkId>()
+        );
+
+        if (!connectionQuery.IsEmpty)
+        {
+            var networkIds = connectionQuery.ToComponentDataArray<NetworkId>(Allocator.Temp);
+            if (networkIds.Length > 0)
+            {
+                var localId = networkIds[0].Value;
+                networkIds.Dispose();
+                return localId;
+            }
+            networkIds.Dispose();
+        }
+
+        return -1;
+    }
+
+    private void CreatePlayerStatsEntry(string playerName, PlayerStats stats, bool isLocalPlayer)
     {
         var scoreEntry = new VisualElement();
         scoreEntry.AddToClassList("score-entry");
@@ -180,18 +249,18 @@ public class ScoreboardManager : MonoBehaviour
         var statsInfo = new VisualElement();
         statsInfo.AddToClassList("stats-info");
 
-        // Total score (main display)
-        var totalScore = new Label(statsData.totalScore.ToString());
+        // Total score
+        var totalScore = new Label(stats.totalScore.ToString());
         totalScore.AddToClassList("total-score");
 
         var statsBreakdown = new VisualElement();
         statsBreakdown.AddToClassList("stats-breakdown");
 
         // Score breakdown
-        var resource1Score = new Label($"R1 Score: {statsData.resource1Score}");
+        var resource1Score = new Label($"R1 Score: {stats.resource1Score}");
         resource1Score.AddToClassList("resource-score");
 
-        var resource2Score = new Label($"R2 Score: {statsData.resource2Score}");
+        var resource2Score = new Label($"R2 Score: {stats.resource2Score}");
         resource2Score.AddToClassList("resource-score");
 
         statsBreakdown.Add(resource1Score);
@@ -203,15 +272,14 @@ public class ScoreboardManager : MonoBehaviour
             var resourcesSection = new VisualElement();
             resourcesSection.AddToClassList("current-resources");
 
-            var resource1Current = new Label($"R1: {statsData.currentResource1}");
+            var resource1Current = new Label($"R1: {stats.resource1}");
             resource1Current.AddToClassList("resource-current");
 
-            var resource2Current = new Label($"R2: {statsData.currentResource2}");
+            var resource2Current = new Label($"R2: {stats.resource2}");
             resource2Current.AddToClassList("resource-current");
 
             resourcesSection.Add(resource1Current);
             resourcesSection.Add(resource2Current);
-
             statsBreakdown.Add(resourcesSection);
         }
 
@@ -222,48 +290,6 @@ public class ScoreboardManager : MonoBehaviour
         scoreEntry.Add(statsInfo);
 
         scoresContainer.Add(scoreEntry);
-    }
-
-    // Called by ECS system or events
-    public void UpdateLocalPlayerStats(int totalScore, int resource1Score, int resource2Score,
-        int currentResource1, int currentResource2)
-    {
-        localPlayerStats = new PlayerStatsData
-        {
-            totalScore = totalScore,
-            resource1Score = resource1Score,
-            resource2Score = resource2Score,
-            currentResource1 = currentResource1,
-            currentResource2 = currentResource2,
-            hasValidData = true
-        };
-
-        // Update individual UI elements if they exist
-        if (localTotalScore != null) localTotalScore.text = totalScore.ToString();
-        if (localResource1Score != null) localResource1Score.text = $"R1: {resource1Score}";
-        if (localResource2Score != null) localResource2Score.text = $"R2: {resource2Score}";
-        if (localResource1Current != null) localResource1Current.text = currentResource1.ToString();
-        if (localResource2Current != null) localResource2Current.text = currentResource2.ToString();
-    }
-
-    public void UpdatePlayerStats(int playerId, int totalScore, int resource1Score, int resource2Score,
-        int currentResource1, int currentResource2)
-    {
-        playerStats[playerId] = new PlayerStatsData
-        {
-            totalScore = totalScore,
-            resource1Score = resource1Score,
-            resource2Score = resource2Score,
-            currentResource1 = currentResource1,
-            currentResource2 = currentResource2,
-            hasValidData = true
-        };
-    }
-
-    // Event handler for unified stats system
-    private void OnLocalStatsChanged(int resource1, int resource2, int totalScore, int resource1Score, int resource2Score)
-    {
-        UpdateLocalPlayerStats(totalScore, resource1Score, resource2Score, resource1, resource2);
     }
 
     public void SetScoreboardVisibility(bool visible)
@@ -284,27 +310,4 @@ public class ScoreboardManager : MonoBehaviour
     {
         showResourcesInScoreboard = !showResourcesInScoreboard;
     }
-
-    [ContextMenu("Add Test Stats")]
-    private void AddTestStats()
-    {
-        UpdatePlayerStats(1, 150, 100, 50, 25, 15);
-        UpdatePlayerStats(2, 200, 120, 80, 30, 20);
-        UpdatePlayerStats(3, 75, 50, 25, 10, 5);
-        UpdateLocalPlayerStats(175, 110, 65, 20, 12);
-    }
-}
-
-/// <summary>
-/// Enhanced struct to hold complete player stats for UI display
-/// </summary>
-[System.Serializable]
-public struct PlayerStatsData
-{
-    public int totalScore;
-    public int resource1Score;
-    public int resource2Score;
-    public int currentResource1;
-    public int currentResource2;
-    public bool hasValidData;
 }
