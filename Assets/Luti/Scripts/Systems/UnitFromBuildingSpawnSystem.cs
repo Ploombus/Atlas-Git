@@ -76,7 +76,7 @@ public partial struct UnitFromBuildingSpawnSystem : ISystem
                     if (spawnCost.unitResource1Cost > 0 || spawnCost.unitResource2Cost > 0)
                     {
                         // Try to spend resources using the helper method
-                        if (!ServerPlayerResourceSystem.TrySpendResources(ref state, buffer,
+                        if (!ServerPlayerStatsSystem.TrySpendResources(ref state, buffer,
                             connection, spawnCost.unitResource1Cost, spawnCost.unitResource2Cost))
                         {
                             Debug.Log($"Player {requesterNetId} cannot afford unit. Cost: R1:{spawnCost.unitResource1Cost}/R2:{spawnCost.unitResource2Cost}");
@@ -251,7 +251,7 @@ public partial struct UnitFromBuildingSpawnSystem : ISystem
         // Award 10 points for spawning a unit
         if (playerConnection != Entity.Null)
         {
-            ServerScoreTrackingSystem.AwardPoints(buffer, playerConnection, 10, ScoreReason.UnitSpawn);
+            ServerPlayerStatsSystem.AwardDirectScore(buffer, playerConnection, 10, ScoreReason.UnitSpawn);
         }
     }
 

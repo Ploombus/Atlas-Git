@@ -135,15 +135,12 @@ public partial struct GatheringServerSystem : ISystem
                             if (SystemAPI.HasComponent<GhostOwner>(unitEnt))
                             {
                                 int ownerId = SystemAPI.GetComponent<GhostOwner>(unitEnt).NetworkId;
-                                if (idToConn.TryGetValue(ownerId, out var conn) && SystemAPI.HasComponent<PlayerResources>(conn))
+                                if (idToConn.TryGetValue(ownerId, out var conn) && SystemAPI.HasComponent<PlayerStats>(conn))
                                 {
-                                    var pr = SystemAPI.GetComponent<PlayerResources>(conn);
-                                    pr.resource1 += 1;
-                                    ecb.SetComponent(conn, pr);
-
-                                    var rpc = ecb.CreateEntity();
-                                    ecb.AddComponent(rpc, new SyncResourcesRpc { resource1 = pr.resource1, resource2 = pr.resource2 });
-                                    ecb.AddComponent(rpc, new SendRpcCommandRequest { TargetConnection = conn });
+                                    ServerPlayerStatsSystem.TriggerStatsChange(ecb, conn,
+                                    resource1Delta: 1,
+                                    resource2Delta: 0,
+                                    awardScorePoints: true);
                                 }
                             }
 

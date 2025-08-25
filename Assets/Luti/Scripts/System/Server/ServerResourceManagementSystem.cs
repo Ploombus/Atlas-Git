@@ -5,7 +5,7 @@ using UnityEngine;
 
 /// <summary>
 /// Server-side system that manages player resources and syncs them with clients
-/// Each player connection entity has a PlayerResources component
+/// Each player connection entity has a PlayerStats component
 /// </summary>
 [WorldSystemFilter(WorldSystemFilterFlags.ServerSimulation)]
 public partial struct ServerResourceManagementSystem : ISystem
@@ -24,12 +24,12 @@ public partial struct ServerResourceManagementSystem : ISystem
         // Initialize resources for new player connections
         foreach (var (netId, entity) in
             SystemAPI.Query<RefRO<NetworkId>>()
-            .WithNone<PlayerResources>()
+            .WithNone<PlayerStats>()
             .WithAll<NetworkStreamConnection>()
             .WithEntityAccess())
         {
             // Give new players starting resources
-            buffer.AddComponent(entity, new PlayerResources
+            buffer.AddComponent(entity, new PlayerStats
             {
                 resource1 = 100, // Starting resources
                 resource2 = 100

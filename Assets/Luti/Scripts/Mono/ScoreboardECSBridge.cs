@@ -1,4 +1,4 @@
-using Unity.Collections;
+/*using Unity.Collections;
 using Unity.Entities;
 using Unity.NetCode;
 using UnityEngine;
@@ -220,4 +220,4 @@ public class ScoreboardECSBridge : MonoBehaviour
             scoreboardManager.UpdatePlayerScore(2, 200, 120, 80);
         }
     }
-}
+}*/
